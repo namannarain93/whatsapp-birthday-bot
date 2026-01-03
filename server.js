@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const { saveBirthday, getBirthdaysForMonth } = require('./db.js');
 const { rewriteForElderlyUser } = require('./llm.js');
+const fetch = (...args) =>
+  import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 const app = express();
 
@@ -108,6 +110,45 @@ app.post('/webhook', async (req, res) => {
   } catch (err) {
     console.error('Error processing webhook:', err);
     res.status(500).send('Sorry, something went wrong. Please try again.');
+  }
+});
+app.get('/send-test', async (req, res) => {
+  try {
+    const token = process.env.WHATSAPP_TOKEN;
+    const phoneNumberId = process.env.PHONE_NUMBER_ID;
+    const to = req.query.to; // e.g. 919819961371
+
+    if (!token || !phoneNumberId || !to) {
+      return res.status(400).json({
+        error: 'Missing WHATSAPP_TOKEN, PHONE_NUMBER_ID, or ?to='
+      });
+    }
+
+    const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'text',
+        text: {
+          body: '👋 Hello! This is a test message sent directly from my server.'
+        }
+      })
+    });
+
+    const data = await response.json();
+    console.log('SEND TEST RESPONSE:', data);
+
+    res.json(data);
+  } catch (err) {
+    console.error('SEND TEST ERROR:', err);
+    res.status(500).send('Failed to send test message');
   }
 });
 

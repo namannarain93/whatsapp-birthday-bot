@@ -12,6 +12,12 @@ app.use((req, res, next) => {
   next();
 });
 
+app.post('/', async (req, res) => {
+  console.log('🔥 WEBHOOK HIT ON ROOT');
+  console.log(JSON.stringify(req.body, null, 2));
+  res.sendStatus(200);
+});
+
 async function safeRewrite(text) {
   try {
     return await rewriteForElderlyUser(text);

@@ -7,6 +7,11 @@ const fetch = (...args) =>
 
 const app = express();
 
+app.use((req, res, next) => {
+  console.log('⚡ INCOMING REQUEST:', req.method, req.path);
+  next();
+});
+
 async function safeRewrite(text) {
   try {
     return await rewriteForElderlyUser(text);

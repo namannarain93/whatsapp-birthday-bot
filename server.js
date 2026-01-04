@@ -146,10 +146,12 @@ app.get('/send-test', async (req, res) => {
       body: JSON.stringify({
         messaging_product: 'whatsapp',
         to,
-        type: 'text',
-        text: {
-          body: '👋 Hello! This is a test message sent directly from my server.'
-        }
+        type: 'template',
+        template: {
+        name: 'hello_world',
+    language: { code: 'en_US' }
+}
+
       })
     });
 

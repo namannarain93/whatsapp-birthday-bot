@@ -63,6 +63,3 @@ module.exports = {
   getBirthdaysForMonth,
   getAllBirthdays
 };
-
-module.exports = { db, saveBirthday, getBirthdaysForMonth };
-

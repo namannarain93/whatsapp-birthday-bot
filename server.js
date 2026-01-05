@@ -12,12 +12,6 @@ app.use((req, res, next) => {
   next();
 });
 
-app.post('/', async (req, res) => {
-  console.log('🔥 WEBHOOK HIT ON ROOT');
-  console.log(JSON.stringify(req.body, null, 2));
-  res.sendStatus(200);
-});
-
 async function safeRewrite(text) {
   try {
     return await rewriteForElderlyUser(text);
@@ -25,6 +19,23 @@ async function safeRewrite(text) {
     console.error('LLM failed, falling back to original text:', err.message);
     return text; // fallback, never block grandma
   }
+}
+async function sendWhatsAppMessage(to, body) {
+  const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
+
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body }
+    })
+  });
 }
 
 function getCurrentMonthName() {
@@ -63,13 +74,26 @@ app.post('/webhook', async (req, res) => {
   try {
     console.log(req.body);
 
-    const phone = req.body.from || '';
-    const message = req.body.text?.body || '';
+    const entry = req.body.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
+    const messageObj = value?.messages?.[0];
+    
+    if (!messageObj) {
+      return res.sendStatus(200);
+    }
+    
+    const phone = messageObj.from;              // who sent the message
+    const message = messageObj.text?.body || ''; // what they typed
+    
+    console.log('📞 FROM:', phone);
+    console.log('💬 MESSAGE:', message);    
 
     if (!message) {
-      const rewritten = await safeRewrite('Hello! I did not understand that message yet 😊');
-      return res.send(rewritten);
-    }
+      const replyText = await safeRewrite('Hello! I did not understand that message yet.');
+      await sendWhatsAppMessage(phone, replyText);
+      return res.sendStatus(200);
+    }    
 
     const lowerMessage = message.toLowerCase();
     if (lowerMessage.includes('this month') || lowerMessage.includes('birthdays this month')) {
@@ -79,13 +103,15 @@ app.post('/webhook', async (req, res) => {
       getBirthdaysForMonth(currentMonthAbbrev, async (err, birthdays) => {
         if (err) {
           const rewritten = await safeRewrite('Sorry, I had trouble looking up the birthdays. Please try again.');
-          return res.send(rewritten);
+          await sendWhatsAppMessage(phone, someText);
+          return res.sendStatus(200);          
         }
         
         if (birthdays.length === 0) {
           const originalText = `I don't have any birthdays saved for ${currentMonthFull} yet. You can add one by sending me a name and date! 🎂`;
           const rewritten = await safeRewrite(originalText);
-          return res.send(rewritten);
+          await sendWhatsAppMessage(phone, someText);
+          return res.sendStatus(200);
         }
         
         let response = `Here are the birthdays in ${currentMonthFull}:\n\n`;
@@ -95,7 +121,9 @@ app.post('/webhook', async (req, res) => {
         response += '\nI\'ll make sure to remind you about these special days! 🎂';
         
         const rewritten = await safeRewrite(response);
-        return res.send(rewritten);
+        await sendWhatsAppMessage(phone, someText);
+        return res.sendStatus(200);
+
       });
       return;
     }
@@ -111,12 +139,14 @@ app.post('/webhook', async (req, res) => {
 
       const originalText = `How wonderful! I've saved ${name}'s birthday on ${month} ${day}. I'll remind you when the time comes 🎂`;
       const rewritten = await safeRewrite(originalText);
-      return res.send(rewritten);
+      await sendWhatsAppMessage(phone, someText);
+      return res.sendStatus(200);
     }
 
     const originalText = `Hello there! You can tell me a birthday like this:\nTanni Feb 9 🎂`;
     const rewritten = await safeRewrite(originalText);
-    return res.send(rewritten);
+    await sendWhatsAppMessage(phone, someText);
+    return res.sendStatus(200);
 
   } catch (err) {
     console.error('Error processing webhook:', err);

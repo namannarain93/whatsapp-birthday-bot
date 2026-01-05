@@ -1,6 +1,5 @@
 require('dotenv').config();
-const express = require('express');
-const { saveBirthday, getBirthdaysForMonth } = require('./db.js');
+const express = require('express'); 
 const { rewriteForElderlyUser } = require('./llm.js');
 const fetch = (...args) =>
   import('node-fetch').then(({ default: fetch }) => fetch(...args));

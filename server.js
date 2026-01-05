@@ -103,14 +103,14 @@ app.post('/webhook', async (req, res) => {
       getBirthdaysForMonth(currentMonthAbbrev, async (err, birthdays) => {
         if (err) {
           const rewritten = await safeRewrite('Sorry, I had trouble looking up the birthdays. Please try again.');
-          await sendWhatsAppMessage(phone, someText);
+          await sendWhatsAppMessage(phone, rewritten);
           return res.sendStatus(200);          
         }
         
         if (birthdays.length === 0) {
           const originalText = `I don't have any birthdays saved for ${currentMonthFull} yet. You can add one by sending me a name and date! 🎂`;
           const rewritten = await safeRewrite(originalText);
-          await sendWhatsAppMessage(phone, someText);
+          await sendWhatsAppMessage(phone, rewritten);
           return res.sendStatus(200);
         }
         
@@ -121,7 +121,7 @@ app.post('/webhook', async (req, res) => {
         response += '\nI\'ll make sure to remind you about these special days! 🎂';
         
         const rewritten = await safeRewrite(response);
-        await sendWhatsAppMessage(phone, someText);
+        await sendWhatsAppMessage(phone, rewritten);
         return res.sendStatus(200);
 
       });
@@ -145,7 +145,7 @@ app.post('/webhook', async (req, res) => {
 
     const originalText = `Hello there! You can tell me a birthday like this:\nTanni Feb 9 🎂`;
     const rewritten = await safeRewrite(originalText);
-    await sendWhatsAppMessage(phone, someText);
+    await sendWhatsAppMessage(phone, rewritten);
     return res.sendStatus(200);
 
   } catch (err) {

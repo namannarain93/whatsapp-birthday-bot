@@ -71,182 +71,110 @@ app.get('/webhook', (req, res) => {
 
 app.post('/webhook', async (req, res) => {
   try {
-    console.log(req.body);
-
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
     const messageObj = value?.messages?.[0];
-    
-    if (!messageObj) {
-      return res.sendStatus(200);
-    }
-    
-    const phone = messageObj.from;              // who sent the message
-    const message = messageObj.text?.body || ''; // what they typed
-    
-    console.log('📞 FROM:', phone);
-    console.log('💬 MESSAGE:', message);    
 
-    if (!message) {
-      const replyText = await safeRewrite('Hello! I did not understand that message yet.');
-      await sendWhatsAppMessage(phone, replyText);
-      return res.sendStatus(200);
-    }    
+    if (!messageObj) return res.sendStatus(200);
 
+    const phone = messageObj.from;
+    const message = messageObj.text?.body || '';
     const lowerMessage = message.toLowerCase();
+
+    console.log('📞 FROM:', phone);
+    console.log('💬 MESSAGE:', message);
+
+    // 1️⃣ All birthdays
     if (
       lowerMessage.includes('all birthdays') ||
       lowerMessage.includes('complete list') ||
-      lowerMessage.includes('all the birthdays') ||
       lowerMessage.includes('everything saved')
     ) {
-      getAllBirthdays(phone, async (err, birthdays) => {
-        let reply;
-    
-        if (err) {
-          reply = 'Sorry, I had trouble finding the birthdays.';
-        } else if (birthdays.length === 0) {
-          reply = 'I do not have any birthdays saved yet.';
-        } else {
-          reply = 'Here is the complete list of birthdays:\n\n';
-          birthdays.forEach(b => {
-            reply += `• ${b.name} - ${b.month} ${b.day}\n`;
-          });
-        }
-    
-        reply = await safeRewrite(reply);
-        await sendWhatsAppMessage(phone, reply);
-        return res.sendStatus(200);
-      });
-    
-      return;
-    }    
-    if (lowerMessage.includes('this month') || lowerMessage.includes('birthdays this month')) {
-      const currentMonthAbbrev = getCurrentMonthAbbrev();
-      const currentMonthFull = getCurrentMonthName();
-      
-      getBirthdaysForMonth(phone, currentMonthAbbrev, async (err, birthdays) => {
-        if (err) {
-          const rewritten = await safeRewrite('Sorry, I had trouble looking up the birthdays. Please try again.');
-          await sendWhatsAppMessage(phone, rewritten);
-          return res.sendStatus(200);          
-        }
-        
-        if (birthdays.length === 0) {
-          const originalText = `I don't have any birthdays saved for ${currentMonthFull} yet. You can add one by sending me a name and date! 🎂`;
-          const rewritten = await safeRewrite(originalText);
-          await sendWhatsAppMessage(phone, rewritten);
-          return res.sendStatus(200);
-        }
-        
-        let response = `Here are the birthdays in ${currentMonthFull}:\n\n`;
-        birthdays.forEach(birthday => {
-          response += `• ${birthday.name} - ${birthday.month} ${birthday.day}\n`;
-        });
-        response += '\nI\'ll make sure to remind you about these special days! 🎂';
-        
-        const rewritten = await safeRewrite(response);
-        await sendWhatsAppMessage(phone, rewritten);
-        return res.sendStatus(200);
+      const birthdays = await getAllBirthdays(phone);
 
-      });
-      return;
+      let reply =
+        birthdays.length === 0
+          ? 'I have not saved any birthdays yet.'
+          : 'Here is the complete list of birthdays:\n\n' +
+            birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
+
+      reply = await safeRewrite(reply);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
     }
 
-    // Delete intent: "delete tanni", "remove varun"
+    // 2️⃣ Birthdays this month
+    if (lowerMessage.includes('this month')) {
+      const month = getCurrentMonthAbbrev();
+      const monthName = getCurrentMonthName();
+      const birthdays = await getBirthdaysForMonth(phone, month);
+
+      let reply =
+        birthdays.length === 0
+          ? `I don't have any birthdays saved for ${monthName}.`
+          : `Here are the birthdays in ${monthName}:\n\n` +
+            birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
+
+      reply = await safeRewrite(reply);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    // 3️⃣ Delete
     const deleteMatch = lowerMessage.match(/^(?:delete|remove)\s+(.+)$/);
     if (deleteMatch) {
-      const name = deleteMatch[1].trim();
-      deleteBirthday(phone, name, async (err, deleted) => {
-        if (err) {
-          const replyText = await safeRewrite('Sorry, I had trouble removing that birthday.');
-          await sendWhatsAppMessage(phone, replyText);
-          return res.sendStatus(200);
-        }
-        if (deleted) {
-          const originalText = `I've removed ${name}'s birthday.`;
-          const rewritten = await safeRewrite(originalText);
-          await sendWhatsAppMessage(phone, rewritten);
-        } else {
-          const originalText = `I couldn't find ${name}'s birthday to remove.`;
-          const rewritten = await safeRewrite(originalText);
-          await sendWhatsAppMessage(phone, rewritten);
-        }
-        return res.sendStatus(200);
-      });
-      return;
+      await deleteBirthday(phone, deleteMatch[1].trim());
+      const reply = await safeRewrite(`I've removed ${deleteMatch[1]}'s birthday.`);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
     }
 
-    // Update intent: "change tanni to feb 10", "update varun birthday to nov 20"
-    const updateMatch = lowerMessage.match(/^(?:change|update)\s+(.+?)\s+(?:to|birthday to)\s+([a-z]+)\s+(\d+)$/i);
+    // 4️⃣ Update
+    const updateMatch = lowerMessage.match(
+      /^(?:change|update)\s+(.+?)\s+(?:to|birthday to)\s+([a-z]+)\s+(\d+)$/i
+    );
     if (updateMatch) {
-      const name = updateMatch[1].trim();
-      const month = updateMatch[2];
-      const day = parseInt(updateMatch[3], 10);
-      
-      updateBirthday(phone, name, day, month, async (err, updated) => {
-        if (err) {
-          const replyText = await safeRewrite('Sorry, I had trouble updating that birthday.');
-          await sendWhatsAppMessage(phone, replyText);
-          return res.sendStatus(200);
-        }
-        if (updated) {
-          const originalText = `I've updated ${name}'s birthday to ${month} ${day}.`;
-          const rewritten = await safeRewrite(originalText);
-          await sendWhatsAppMessage(phone, rewritten);
-        } else {
-          const originalText = `I couldn't find ${name}'s birthday to update.`;
-          const rewritten = await safeRewrite(originalText);
-          await sendWhatsAppMessage(phone, rewritten);
-        }
-        return res.sendStatus(200);
-      });
-      return;
+      const [, name, month, day] = updateMatch;
+      await updateBirthday(phone, name.trim(), parseInt(day), month);
+      const reply = await safeRewrite(`I've updated ${name}'s birthday to ${month} ${day}.`);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
     }
 
-    // Save intent: "Tanni Feb 9"
-    const match = message.match(/^(.+?)\s+([A-Za-z]+)\s+(\d+)$/);
+    // 5️⃣ Save
+    const saveMatch = message.match(/^(.+?)\s+([A-Za-z]+)\s+(\d+)$/);
+    if (saveMatch) {
+      const [, name, month, day] = saveMatch;
+      const exists = await birthdayExists(phone, name.trim(), parseInt(day), month);
 
-    if (match) {
-      const name = match[1].trim();
-      const month = match[2];
-      const day = parseInt(match[3], 10);
-
-      birthdayExists(phone, name, day, month, async (err, exists) => {
-        if (err) {
-          const replyText = await safeRewrite('Sorry, I had trouble checking that birthday.');
-          await sendWhatsAppMessage(phone, replyText);
-          return res.sendStatus(200);
-        }
-        
-        if (exists) {
-          const originalText = `I already have ${name}'s birthday saved on ${month} ${day} 😊`;
-          const rewritten = await safeRewrite(originalText);
-          await sendWhatsAppMessage(phone, rewritten);
-          return res.sendStatus(200);
-        }
-
-        saveBirthday(phone, name, day, month);
-
-        const originalText = `How wonderful! I've saved ${name}'s birthday on ${month} ${day}. I'll remind you when the time comes 🎂`;
-        const rewritten = await safeRewrite(originalText);
-        await sendWhatsAppMessage(phone, rewritten);
+      if (exists) {
+        const reply = await safeRewrite(
+          `I already have ${name}'s birthday saved on ${month} ${day}.`
+        );
+        await sendWhatsAppMessage(phone, reply);
         return res.sendStatus(200);
-      });
-      return;
+      }
+
+      await saveBirthday(phone, name.trim(), parseInt(day), month);
+      const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${day}. 🎂`);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
     }
 
-    const originalText = `Hello there! You can tell me a birthday like this:\nTanni Feb 9 🎂`;
-    const rewritten = await safeRewrite(originalText);
-    await sendWhatsAppMessage(phone, rewritten);
+    // 6️⃣ Fallback
+    const help = await safeRewrite(
+      'You can tell me a birthday like this: Tanni Feb 9 🎂'
+    );
+    await sendWhatsAppMessage(phone, help);
     return res.sendStatus(200);
 
   } catch (err) {
-    console.error('Error processing webhook:', err);
-    res.status(500).send('Sorry, something went wrong. Please try again.');
+    console.error('Webhook error:', err);
+    return res.sendStatus(200);
   }
 });
+
 app.get('/send-test', async (req, res) => {
   try {
     const token = process.env.WHATSAPP_TOKEN;

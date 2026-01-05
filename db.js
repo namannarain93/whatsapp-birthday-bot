@@ -51,6 +51,18 @@ function getBirthdaysForMonth(month, callback) {
     }
   );
 }
+function getAllBirthdays(callback) {
+  db.all(
+    "SELECT name, day, month FROM birthdays ORDER BY month, day",
+    callback
+  );
+}
+
+module.exports = {
+  saveBirthday,
+  getBirthdaysForMonth,
+  getAllBirthdays
+};
 
 module.exports = { db, saveBirthday, getBirthdaysForMonth };
 

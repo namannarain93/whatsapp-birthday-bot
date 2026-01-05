@@ -4,8 +4,8 @@ const { saveBirthday, getBirthdaysForMonth } = require('./db.js');
 const { rewriteForElderlyUser } = require('./llm.js');
 const fetch = (...args) =>
   import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
 const app = express();
+const { saveBirthday, getBirthdaysForMonth, getAllBirthdays } = require('./db.js');
 
 app.use((req, res, next) => {
   console.log('⚡ INCOMING REQUEST:', req.method, req.path);
@@ -96,6 +96,33 @@ app.post('/webhook', async (req, res) => {
     }    
 
     const lowerMessage = message.toLowerCase();
+    if (
+      lowerMessage.includes('all birthdays') ||
+      lowerMessage.includes('complete list') ||
+      lowerMessage.includes('all the birthdays') ||
+      lowerMessage.includes('everything saved')
+    ) {
+      getAllBirthdays(async (err, birthdays) => {
+        let reply;
+    
+        if (err) {
+          reply = 'Sorry, I had trouble finding the birthdays.';
+        } else if (birthdays.length === 0) {
+          reply = 'I do not have any birthdays saved yet.';
+        } else {
+          reply = 'Here is the complete list of birthdays:\n\n';
+          birthdays.forEach(b => {
+            reply += `• ${b.name} - ${b.month} ${b.day}\n`;
+          });
+        }
+    
+        reply = await safeRewrite(reply);
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      });
+    
+      return;
+    }    
     if (lowerMessage.includes('this month') || lowerMessage.includes('birthdays this month')) {
       const currentMonthAbbrev = getCurrentMonthAbbrev();
       const currentMonthFull = getCurrentMonthName();

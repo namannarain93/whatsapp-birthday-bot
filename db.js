@@ -37,10 +37,10 @@ function saveBirthday(phone, name, day, month) {
   );
 }
 
-function getBirthdaysForMonth(month, callback) {
+function getBirthdaysForMonth(phone, month, callback) {
   db.all(
-    'SELECT * FROM birthdays WHERE LOWER(month) = LOWER(?) OR LOWER(month) LIKE LOWER(?) ORDER BY day',
-    [month, month + '%'],
+    'SELECT * FROM birthdays WHERE phone = ? AND (LOWER(month) = LOWER(?) OR LOWER(month) LIKE LOWER(?)) ORDER BY day',
+    [phone, month, month + '%'],
     (err, rows) => {
       if (err) {
         console.error('Error getting birthdays:', err);
@@ -51,15 +51,64 @@ function getBirthdaysForMonth(month, callback) {
     }
   );
 }
-function getAllBirthdays(callback) {
+function getAllBirthdays(phone, callback) {
   db.all(
-    "SELECT name, day, month FROM birthdays ORDER BY month, day",
+    "SELECT name, day, month FROM birthdays WHERE phone = ? ORDER BY month, day",
+    [phone],
     callback
+  );
+}
+
+function birthdayExists(phone, name, day, month, callback) {
+  db.get(
+    'SELECT * FROM birthdays WHERE phone = ? AND LOWER(name) = LOWER(?) AND day = ? AND LOWER(month) = LOWER(?)',
+    [phone, name, day, month],
+    (err, row) => {
+      if (err) {
+        console.error('Error checking birthday:', err);
+        callback(err, null);
+      } else {
+        callback(null, row !== undefined);
+      }
+    }
+  );
+}
+
+function deleteBirthday(phone, name, callback) {
+  db.run(
+    'DELETE FROM birthdays WHERE phone = ? AND LOWER(name) = LOWER(?)',
+    [phone, name],
+    function(err) {
+      if (err) {
+        console.error('Error deleting birthday:', err);
+        callback(err, null);
+      } else {
+        callback(null, this.changes > 0);
+      }
+    }
+  );
+}
+
+function updateBirthday(phone, name, day, month, callback) {
+  db.run(
+    'UPDATE birthdays SET day = ?, month = ? WHERE phone = ? AND LOWER(name) = LOWER(?)',
+    [day, month, phone, name],
+    function(err) {
+      if (err) {
+        console.error('Error updating birthday:', err);
+        callback(err, null);
+      } else {
+        callback(null, this.changes > 0);
+      }
+    }
   );
 }
 
 module.exports = {
   saveBirthday,
   getBirthdaysForMonth,
-  getAllBirthdays
+  getAllBirthdays,
+  birthdayExists,
+  deleteBirthday,
+  updateBirthday
 };

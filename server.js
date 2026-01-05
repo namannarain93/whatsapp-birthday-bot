@@ -139,7 +139,7 @@ app.post('/webhook', async (req, res) => {
 
       const originalText = `How wonderful! I've saved ${name}'s birthday on ${month} ${day}. I'll remind you when the time comes 🎂`;
       const rewritten = await safeRewrite(originalText);
-      await sendWhatsAppMessage(phone, someText);
+      await sendWhatsAppMessage(phone, rewritten);
       return res.sendStatus(200);
     }
 

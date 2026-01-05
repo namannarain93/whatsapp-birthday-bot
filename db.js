@@ -15,9 +15,9 @@ const pool = new Pool({
         name TEXT NOT NULL,
         day INTEGER NOT NULL,
         month TEXT NOT NULL,
-        UNIQUE (phone, LOWER(name), day, LOWER(month))
-      )
-    `);
+        UNIQUE (phone, name, day, month)
+      );
+    `);    
     console.log('Birthdays table ready (Postgres)');
   } catch (err) {
     console.error('Error creating table:', err);

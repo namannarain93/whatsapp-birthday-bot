@@ -8,13 +8,20 @@ const pool = new Pool({
 // Create tables on startup
 (async () => {
   try {
-    // Create users table for tracking welcome state
+    // Create users table for tracking welcome state and timezone
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         phone TEXT PRIMARY KEY,
         has_seen_welcome BOOLEAN NOT NULL DEFAULT false,
+        timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+    
+    // Add timezone column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata';
     `);
 
     // Create birthdays table
@@ -83,6 +90,32 @@ async function getAllBirthdays(phone) {
     ORDER BY month, day
     `,
     [phone]
+  );
+  return res.rows;
+}
+
+// Get all users with their timezones
+async function getAllUsers() {
+  const res = await pool.query(
+    `
+    SELECT phone, timezone
+    FROM users
+    WHERE timezone IS NOT NULL
+    `
+  );
+  return res.rows;
+}
+
+// Get birthdays for a specific day and month (for reminders)
+async function getBirthdaysForDate(phone, day, month) {
+  const res = await pool.query(
+    `
+    SELECT name, day, month
+    FROM birthdays
+    WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
+    ORDER BY name
+    `,
+    [phone, day, month]
   );
   return res.rows;
 }
@@ -173,12 +206,12 @@ async function userExists(phone) {
   return res.rowCount > 0;
 }
 
-// Onboard a new user (insert into users table with has_seen_welcome = true)
+// Onboard a new user (insert into users table with has_seen_welcome = true and default timezone)
 async function onboardUser(phone) {
   await pool.query(
     `
-    INSERT INTO users (phone, has_seen_welcome)
-    VALUES ($1, true)
+    INSERT INTO users (phone, has_seen_welcome, timezone)
+    VALUES ($1, true, 'Asia/Kolkata')
     ON CONFLICT (phone) DO NOTHING
     `,
     [phone]
@@ -223,6 +256,7 @@ module.exports = {
   birthdayExistsByName,
   getBirthdaysForMonth,
   getAllBirthdays,
+  getBirthdaysForDate,
   deleteBirthday,
   updateBirthday,
   updateBirthdayName,
@@ -230,5 +264,6 @@ module.exports = {
   hasSeenWelcome,
   markWelcomeSeen,
   userExists,
-  onboardUser
+  onboardUser,
+  getAllUsers
 };

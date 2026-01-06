@@ -164,6 +164,42 @@ function normalizeMonthToShort(token) {
   return CANONICAL_TO_SHORT[canonical] || null;
 }
 
+// Extract month from text message (returns canonical short form or null)
+// Handles: "march", "March", "Mar", "3", etc.
+function extractMonthFromText(message) {
+  if (!message || !message.trim()) return null;
+  
+  const lower = message.toLowerCase();
+  
+  // Look for month words (short or full)
+  const monthWordRegex =
+    /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
+  const monthWordMatch = lower.match(monthWordRegex);
+  if (monthWordMatch) {
+    const normalized = normalizeMonthToShort(monthWordMatch[1]);
+    if (normalized) {
+      console.log(`[MONTH EXTRACTION] Found month "${monthWordMatch[1]}" → normalized to "${normalized}"`);
+      return normalized;
+    }
+  }
+  
+  // Look for numeric month (1-12)
+  const numericMatch = lower.match(/\b(\d{1,2})\b/);
+  if (numericMatch) {
+    const num = parseInt(numericMatch[1], 10);
+    if (num >= 1 && num <= 12) {
+      const normalized = normalizeMonthToShort(num.toString());
+      if (normalized) {
+        console.log(`[MONTH EXTRACTION] Found numeric month "${num}" → normalized to "${normalized}"`);
+        return normalized;
+      }
+    }
+  }
+  
+  console.log(`[MONTH EXTRACTION] No month found in message: "${message}"`);
+  return null;
+}
+
 // Parse flexible "name + date" messages into { name, day, month }
 function parseNameAndDate(message) {
   if (!message || !message.trim()) return null;
@@ -498,8 +534,26 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (parsed.intent === 'list_month') {
-      const month = getCurrentMonthAbbrev();
-      const monthName = getCurrentMonthName();
+      // Priority 1: Check if explicit month is mentioned in message
+      let month = extractMonthFromText(message);
+      let monthName;
+      
+      if (month) {
+        // Explicit month found in message - use it
+        monthName = month.charAt(0).toUpperCase() + month.slice(1);
+        console.log(`[LIST_MONTH] Using explicit month from message: ${monthName}`);
+      } else if (lowerMessage.includes('this month')) {
+        // Priority 2: User said "this month" - use current month
+        month = getCurrentMonthAbbrev();
+        monthName = getCurrentMonthName();
+        console.log(`[LIST_MONTH] Using current month (this month): ${monthName}`);
+      } else {
+        // Priority 3: Fallback to current month (for backward compatibility)
+        month = getCurrentMonthAbbrev();
+        monthName = getCurrentMonthName();
+        console.log(`[LIST_MONTH] No explicit month found, using current month: ${monthName}`);
+      }
+      
       const birthdays = await getBirthdaysForMonth(phone, month);
 
       let reply =
@@ -533,9 +587,13 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    if (lowerMessage.includes('this month')) {
+    // Regex fallback: "this month" (only if no explicit month name is present)
+    // Check for explicit month first to avoid conflicts
+    const explicitMonthInMessage = extractMonthFromText(message);
+    if (lowerMessage.includes('this month') && !explicitMonthInMessage) {
       const month = getCurrentMonthAbbrev();
       const monthName = getCurrentMonthName();
+      console.log(`[REGEX FALLBACK] "this month" detected, using current month: ${monthName}`);
       const birthdays = await getBirthdaysForMonth(phone, month);
 
       let reply =
@@ -824,12 +882,21 @@ app.post('/webhook', async (req, res) => {
     }
     
     // 3️⃣ Search by month (LLM intent)
-    if (parsed.intent === 'search_month' && parsed.month) {
-      const month = parsed.month;
-      const normalizedMonth = normalizeMonthToShort(month);
+    if (parsed.intent === 'search_month') {
+      // Priority: Use explicit month from message text, then LLM parsed month, then current month
+      let normalizedMonth = extractMonthFromText(message);
+      
+      if (!normalizedMonth && parsed.month) {
+        // Fallback to LLM parsed month if extraction didn't find one
+        normalizedMonth = normalizeMonthToShort(parsed.month);
+        if (normalizedMonth) {
+          console.log(`[SEARCH_MONTH] Using LLM parsed month: "${parsed.month}" → "${normalizedMonth}"`);
+        }
+      }
       
       if (!normalizedMonth) {
-        // Invalid month, fall through
+        // No month found, fall through to regex
+        console.log(`[SEARCH_MONTH] No month found in message or LLM parse, falling through`);
       } else {
         const birthdays = await getBirthdaysForMonth(phone, normalizedMonth);
         const monthName = normalizedMonth.charAt(0).toUpperCase() + normalizedMonth.slice(1);
@@ -952,12 +1019,37 @@ app.post('/webhook', async (req, res) => {
     }
     
     // Search by month (regex fallback)
+    // Pattern: "birthdays in March", "show me February birthdays", etc.
     const searchMonthMatch = lowerMessage.match(/(?:show me|who has birthday in|birthdays in)\s+([a-z]+)/i);
     if (searchMonthMatch) {
       const month = searchMonthMatch[1];
       const normalizedMonth = normalizeMonthToShort(month);
       
       if (normalizedMonth) {
+        console.log(`[REGEX FALLBACK] Found month "${month}" → normalized to "${normalizedMonth}"`);
+        const birthdays = await getBirthdaysForMonth(phone, normalizedMonth);
+        const monthName = normalizedMonth.charAt(0).toUpperCase() + normalizedMonth.slice(1);
+        
+        if (birthdays.length === 0) {
+          const reply = await safeRewrite(`I don't have any birthdays saved for ${monthName}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else {
+          const list = birthdays.map(b => `• ${b.day} – ${b.name}`).join('\n');
+          const reply = await safeRewrite(`Birthdays in ${monthName}:\n\n${list}`);
+          await sendWhatsAppMessage(phone, reply);
+        }
+        return res.sendStatus(200);
+      }
+    }
+    
+    // Additional regex: "what are the birthdays in March?" pattern
+    const whatBirthdaysMatch = lowerMessage.match(/(?:what are|what're|what's)\s+(?:the\s+)?birthdays?\s+in\s+([a-z]+)/i);
+    if (whatBirthdaysMatch) {
+      const month = whatBirthdaysMatch[1];
+      const normalizedMonth = normalizeMonthToShort(month);
+      
+      if (normalizedMonth) {
+        console.log(`[REGEX FALLBACK] Found month in "what are birthdays in" pattern: "${month}" → "${normalizedMonth}"`);
         const birthdays = await getBirthdaysForMonth(phone, normalizedMonth);
         const monthName = normalizedMonth.charAt(0).toUpperCase() + normalizedMonth.slice(1);
         

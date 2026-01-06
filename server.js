@@ -373,12 +373,17 @@ app.post('/webhook', async (req, res) => {
       const parsedSave = parseNameAndDate(trimmed);
       if (parsedSave) {
         const { name, day, month } = parsedSave;
-        const exists = await birthdayExists(phone, name.trim(), day, month);
-        if (exists) {
-          return { success: false, reason: 'duplicate', name, day, month };
+        // Normalize month to canonical short form (Jan, Feb, etc.) at write time
+        const normalizedMonth = normalizeMonthToShort(month);
+        if (!normalizedMonth) {
+          return { success: false, reason: 'parse_failed', line: trimmed };
         }
-        await saveBirthday(phone, name.trim(), day, month);
-        return { success: true, name, day, month };
+        const exists = await birthdayExists(phone, name.trim(), day, normalizedMonth);
+        if (exists) {
+          return { success: false, reason: 'duplicate', name, day, month: normalizedMonth };
+        }
+        await saveBirthday(phone, name.trim(), day, normalizedMonth);
+        return { success: true, name, day, month: normalizedMonth };
       }
 
       // Try legacy regex pattern ("Name Month Day")
@@ -386,12 +391,17 @@ app.post('/webhook', async (req, res) => {
       if (saveMatch) {
         const [, name, month, day] = saveMatch;
         const d = parseInt(day, 10);
-        const exists = await birthdayExists(phone, name.trim(), d, month);
-        if (exists) {
-          return { success: false, reason: 'duplicate', name, day: d, month };
+        // Normalize month to canonical short form (Jan, Feb, etc.) at write time
+        const normalizedMonth = normalizeMonthToShort(month);
+        if (!normalizedMonth) {
+          return { success: false, reason: 'parse_failed', line: trimmed };
         }
-        await saveBirthday(phone, name.trim(), d, month);
-        return { success: true, name, day: d, month };
+        const exists = await birthdayExists(phone, name.trim(), d, normalizedMonth);
+        if (exists) {
+          return { success: false, reason: 'duplicate', name, day: d, month: normalizedMonth };
+        }
+        await saveBirthday(phone, name.trim(), d, normalizedMonth);
+        return { success: true, name, day: d, month: normalizedMonth };
       }
 
       return { success: false, reason: 'parse_failed', line: trimmed };
@@ -554,21 +564,27 @@ app.post('/webhook', async (req, res) => {
       if (!name || !day || !month) {
         // If we still don't have a valid triplet, fall through to regex logic
       } else {
-        const exists = await birthdayExists(phone, name, day, month);
-        if (exists) {
-          const reply = await safeRewrite(
-            `I already have ${name}'s birthday saved on ${month} ${day}.`
-          );
+        // Normalize month to canonical short form (Jan, Feb, etc.) at write time
+        const normalizedMonth = normalizeMonthToShort(month);
+        if (!normalizedMonth) {
+          // Invalid month, fall through to regex logic
+        } else {
+          const exists = await birthdayExists(phone, name, day, normalizedMonth);
+          if (exists) {
+            const reply = await safeRewrite(
+              `I already have ${name}'s birthday saved on ${normalizedMonth} ${day}.`
+            );
+            await sendWhatsAppMessage(phone, reply);
+            return res.sendStatus(200);
+          }
+
+          await saveBirthday(phone, name, day, normalizedMonth);
+          // Mark user as having seen welcome after successful save (they're now an active user)
+          await markWelcomeSeen(phone);
+          const reply = await safeRewrite(`I've saved ${name}'s birthday on ${normalizedMonth} ${day}. 🎂`);
           await sendWhatsAppMessage(phone, reply);
           return res.sendStatus(200);
         }
-
-        await saveBirthday(phone, name, day, month);
-        // Mark user as having seen welcome after successful save (they're now an active user)
-        await markWelcomeSeen(phone);
-        const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${day}. 🎂`);
-        await sendWhatsAppMessage(phone, reply);
-        return res.sendStatus(200);
       }
     }
 
@@ -617,10 +633,16 @@ app.post('/webhook', async (req, res) => {
       const name = parsed.name.trim();
       const day = parseInt(parsed.day);
       const month = parsed.month;
-      await updateBirthday(phone, name, day, month);
-      const reply = await safeRewrite(`I've updated ${name}'s birthday to ${month} ${day}.`);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
+      // Normalize month to canonical short form (Jan, Feb, etc.) at write time
+      const normalizedMonth = normalizeMonthToShort(month);
+      if (!normalizedMonth) {
+        // Invalid month, fall through to regex logic
+      } else {
+        await updateBirthday(phone, name, day, normalizedMonth);
+        const reply = await safeRewrite(`I've updated ${name}'s birthday to ${normalizedMonth} ${day}.`);
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
     }
 
     // If intent is "unknown", fall through to existing regex logic below
@@ -675,30 +697,42 @@ app.post('/webhook', async (req, res) => {
     );
     if (updateMatch) {
       const [, name, month, day] = updateMatch;
-      await updateBirthday(phone, name.trim(), parseInt(day), month);
-      const reply = await safeRewrite(`I've updated ${name}'s birthday to ${month} ${day}.`);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
+      // Normalize month to canonical short form (Jan, Feb, etc.) at write time
+      const normalizedMonth = normalizeMonthToShort(month);
+      if (!normalizedMonth) {
+        // Invalid month, fall through to fallback
+      } else {
+        await updateBirthday(phone, name.trim(), parseInt(day), normalizedMonth);
+        const reply = await safeRewrite(`I've updated ${name}'s birthday to ${normalizedMonth} ${day}.`);
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
     }
 
     // 5️⃣ Save (with flexible date parsing)
     const parsedSave = parseNameAndDate(message);
     if (parsedSave) {
       const { name, day, month } = parsedSave;
-      const exists = await birthdayExists(phone, name.trim(), day, month);
+      // Normalize month to canonical short form (Jan, Feb, etc.) at write time
+      const normalizedMonth = normalizeMonthToShort(month);
+      if (!normalizedMonth) {
+        // Invalid month, fall through to regex logic
+      } else {
+        const exists = await birthdayExists(phone, name.trim(), day, normalizedMonth);
 
-      if (exists) {
-        const reply = await safeRewrite(
-          `I already have ${name}'s birthday saved on ${month} ${day}.`
-        );
+        if (exists) {
+          const reply = await safeRewrite(
+            `I already have ${name}'s birthday saved on ${normalizedMonth} ${day}.`
+          );
+          await sendWhatsAppMessage(phone, reply);
+          return res.sendStatus(200);
+        }
+
+        await saveBirthday(phone, name.trim(), day, normalizedMonth);
+        const reply = await safeRewrite(`I've saved ${name}'s birthday on ${normalizedMonth} ${day}. 🎂`);
         await sendWhatsAppMessage(phone, reply);
         return res.sendStatus(200);
       }
-
-      await saveBirthday(phone, name.trim(), day, month);
-      const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${day}. 🎂`);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
     }
 
     // Legacy save pattern fallback ("Name Month Day")
@@ -706,22 +740,28 @@ app.post('/webhook', async (req, res) => {
     if (saveMatch) {
       const [, name, month, day] = saveMatch;
       const d = parseInt(day, 10);
-      const exists = await birthdayExists(phone, name.trim(), d, month);
+      // Normalize month to canonical short form (Jan, Feb, etc.) at write time
+      const normalizedMonth = normalizeMonthToShort(month);
+      if (!normalizedMonth) {
+        // Invalid month, fall through to fallback
+      } else {
+        const exists = await birthdayExists(phone, name.trim(), d, normalizedMonth);
 
-      if (exists) {
-        const reply = await safeRewrite(
-          `I already have ${name}'s birthday saved on ${month} ${d}.`
-        );
+        if (exists) {
+          const reply = await safeRewrite(
+            `I already have ${name}'s birthday saved on ${normalizedMonth} ${d}.`
+          );
+          await sendWhatsAppMessage(phone, reply);
+          return res.sendStatus(200);
+        }
+
+        await saveBirthday(phone, name.trim(), d, normalizedMonth);
+        // Mark user as having seen welcome after successful save (they're now an active user)
+        await markWelcomeSeen(phone);
+        const reply = await safeRewrite(`I've saved ${name}'s birthday on ${normalizedMonth} ${d}. 🎂`);
         await sendWhatsAppMessage(phone, reply);
         return res.sendStatus(200);
       }
-
-      await saveBirthday(phone, name.trim(), d, month);
-      // Mark user as having seen welcome after successful save (they're now an active user)
-      await markWelcomeSeen(phone);
-      const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${d}. 🎂`);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
     }
 
     // 6️⃣ Fallback

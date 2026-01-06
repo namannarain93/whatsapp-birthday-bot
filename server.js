@@ -13,7 +13,9 @@ const {
   deleteBirthday,
   updateBirthday,
   updateBirthdayName,
-  isFirstTimeUser
+  isFirstTimeUser,
+  hasSeenWelcome,
+  markWelcomeSeen
 } = require('./db.js');
 
 app.use((req, res, next) => {
@@ -426,6 +428,10 @@ app.post('/webhook', async (req, res) => {
       }
 
       if (summary) {
+        // Mark user as having seen welcome after successful multi-line save
+        if (saved.length > 0) {
+          await markWelcomeSeen(phone);
+        }
         const reply = await safeRewrite(summary.trim());
         await sendWhatsAppMessage(phone, reply);
       }
@@ -436,19 +442,95 @@ app.post('/webhook', async (req, res) => {
     if (lowerMessage.includes('help')) {
       const reply = await safeRewrite(WELCOME_MESSAGE);
       await sendWhatsAppMessage(phone, reply);
+      // Mark as having seen welcome if they explicitly ask for help
+      await markWelcomeSeen(phone);
       return res.sendStatus(200);
     }
 
-    // 0️⃣ First-time user welcome flow
-    const firstTime = await isFirstTimeUser(phone);
-    if (firstTime) {
-      const reply = await safeRewrite(WELCOME_MESSAGE);
+    // Check if user has seen welcome (for fallback message logic)
+    const seenWelcome = await hasSeenWelcome(phone);
+
+    // LLM Intent Parsing (before regex fallback)
+    const parsed = await parseIntentWithLLM(message);
+
+    // Handle list intents FIRST (before welcome check) to ensure they never trigger welcome
+    // These are safe operations that existing users should always be able to do
+    if (parsed.intent === 'list_all') {
+      const birthdays = await getAllBirthdays(phone);
+
+      if (birthdays.length === 0) {
+        const reply = await safeRewrite('I have not saved any birthdays yet.');
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
+
+      const formatted = formatBirthdaysChronologically(birthdays);
+      const reply = await safeRewrite(formatted);
       await sendWhatsAppMessage(phone, reply);
       return res.sendStatus(200);
     }
 
-    // LLM Intent Parsing (before regex fallback)
-    const parsed = await parseIntentWithLLM(message);
+    if (parsed.intent === 'list_month') {
+      const month = getCurrentMonthAbbrev();
+      const monthName = getCurrentMonthName();
+      const birthdays = await getBirthdaysForMonth(phone, month);
+
+      let reply =
+        birthdays.length === 0
+          ? `I don't have any birthdays saved for ${monthName}.`
+          : `Here are the birthdays in ${monthName}:\n\n` +
+            birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
+
+      reply = await safeRewrite(reply);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    // Check for list intents via regex (also before welcome check)
+    if (
+      lowerMessage.includes('all birthdays') ||
+      lowerMessage.includes('complete list') ||
+      lowerMessage.includes('everything saved')
+    ) {
+      const birthdays = await getAllBirthdays(phone);
+
+      if (birthdays.length === 0) {
+        const reply = await safeRewrite('I have not saved any birthdays yet.');
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
+
+      const formatted = formatBirthdaysChronologically(birthdays);
+      const reply = await safeRewrite(formatted);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    if (lowerMessage.includes('this month')) {
+      const month = getCurrentMonthAbbrev();
+      const monthName = getCurrentMonthName();
+      const birthdays = await getBirthdaysForMonth(phone, month);
+
+      let reply =
+        birthdays.length === 0
+          ? `I don't have any birthdays saved for ${monthName}.`
+          : `Here are the birthdays in ${monthName}:\n\n` +
+            birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
+
+      reply = await safeRewrite(reply);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    // 0️⃣ First-time user welcome flow (AFTER list intents to prevent welcome on "complete list")
+    // Only show welcome to users who haven't seen it yet
+    if (!seenWelcome) {
+      const reply = await safeRewrite(WELCOME_MESSAGE);
+      await sendWhatsAppMessage(phone, reply);
+      // Mark user as having seen welcome after sending it
+      await markWelcomeSeen(phone);
+      return res.sendStatus(200);
+    }
 
     // Handle LLM-parsed intents
     if (parsed.intent === 'save') {
@@ -481,6 +563,8 @@ app.post('/webhook', async (req, res) => {
         }
 
         await saveBirthday(phone, name, day, month);
+        // Mark user as having seen welcome after successful save (they're now an active user)
+        await markWelcomeSeen(phone);
         const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${day}. 🎂`);
         await sendWhatsAppMessage(phone, reply);
         return res.sendStatus(200);
@@ -538,75 +622,8 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    if (parsed.intent === 'list_all') {
-      const birthdays = await getAllBirthdays(phone);
-
-      if (birthdays.length === 0) {
-        const reply = await safeRewrite('I have not saved any birthdays yet.');
-        await sendWhatsAppMessage(phone, reply);
-        return res.sendStatus(200);
-      }
-
-      const formatted = formatBirthdaysChronologically(birthdays);
-      const reply = await safeRewrite(formatted);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
-    }
-
-    if (parsed.intent === 'list_month') {
-      const month = getCurrentMonthAbbrev();
-      const monthName = getCurrentMonthName();
-      const birthdays = await getBirthdaysForMonth(phone, month);
-
-      let reply =
-        birthdays.length === 0
-          ? `I don't have any birthdays saved for ${monthName}.`
-          : `Here are the birthdays in ${monthName}:\n\n` +
-            birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
-
-      reply = await safeRewrite(reply);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
-    }
-
     // If intent is "unknown", fall through to existing regex logic below
-
-    // 1️⃣ All birthdays (regex fallback)
-    if (
-      lowerMessage.includes('all birthdays') ||
-      lowerMessage.includes('complete list') ||
-      lowerMessage.includes('everything saved')
-    ) {
-      const birthdays = await getAllBirthdays(phone);
-
-      if (birthdays.length === 0) {
-        const reply = await safeRewrite('I have not saved any birthdays yet.');
-        await sendWhatsAppMessage(phone, reply);
-        return res.sendStatus(200);
-      }
-
-      const formatted = formatBirthdaysChronologically(birthdays);
-      const reply = await safeRewrite(formatted);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
-    }
-
-    // 2️⃣ Birthdays this month
-    if (lowerMessage.includes('this month')) {
-      const month = getCurrentMonthAbbrev();
-      const monthName = getCurrentMonthName();
-      const birthdays = await getBirthdaysForMonth(phone, month);
-
-      let reply =
-        birthdays.length === 0
-          ? `I don't have any birthdays saved for ${monthName}.`
-          : `Here are the birthdays in ${monthName}:\n\n` +
-            birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
-
-      reply = await safeRewrite(reply);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
-    }
+    // (List intents already handled above before welcome check)
 
     // 3️⃣ Delete
     const deleteMatch = lowerMessage.match(/^(?:delete|remove)\s+(.+)$/);
@@ -699,16 +716,26 @@ app.post('/webhook', async (req, res) => {
       }
 
       await saveBirthday(phone, name.trim(), d, month);
+      // Mark user as having seen welcome after successful save (they're now an active user)
+      await markWelcomeSeen(phone);
       const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${d}. 🎂`);
       await sendWhatsAppMessage(phone, reply);
       return res.sendStatus(200);
     }
 
     // 6️⃣ Fallback
-    const help = await safeRewrite(
-      'You can tell me a birthday like this: Tanni Feb 9 🎂\nIn case you are stuck, just type: help'
-    );
-    await sendWhatsAppMessage(phone, help);
+    // Existing users get a short help hint, new users already got full welcome above
+    if (seenWelcome) {
+      // Existing user: show short help hint instead of full welcome
+      const help = await safeRewrite("Type 'help' if you're stuck 😊");
+      await sendWhatsAppMessage(phone, help);
+    } else {
+      // This shouldn't happen (new users get welcome above), but fallback just in case
+      const help = await safeRewrite(
+        'You can tell me a birthday like this: Tanni Feb 9 🎂\nIn case you are stuck, just type: help'
+      );
+      await sendWhatsAppMessage(phone, help);
+    }
     return res.sendStatus(200);
 
   } catch (err) {

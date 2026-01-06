@@ -5,9 +5,19 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Create table on startup
+// Create tables on startup
 (async () => {
   try {
+    // Create users table for tracking welcome state
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        phone TEXT PRIMARY KEY,
+        has_seen_welcome BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Create birthdays table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS birthdays (
         id SERIAL PRIMARY KEY,
@@ -18,9 +28,9 @@ const pool = new Pool({
         UNIQUE (phone, name, day, month)
       );
     `);    
-    console.log('Birthdays table ready (Postgres)');
+    console.log('Database tables ready (Postgres)');
   } catch (err) {
-    console.error('Error creating table:', err);
+    console.error('Error creating tables:', err);
   }
 })();
 
@@ -127,18 +137,36 @@ async function updateBirthdayName(phone, oldName, newName) {
   return res.rowCount > 0;
 }
 
-// Check if this is the first time a phone number is using the bot
-async function isFirstTimeUser(phone) {
+// Check if user has seen the welcome message
+async function hasSeenWelcome(phone) {
   const res = await pool.query(
     `
-    SELECT 1 FROM birthdays
+    SELECT has_seen_welcome FROM users
     WHERE phone = $1
-    LIMIT 1
     `,
     [phone]
   );
-  // First time user if no rows exist for this phone
-  return res.rowCount === 0;
+  return res.rows.length > 0 && res.rows[0].has_seen_welcome === true;
+}
+
+// Mark user as having seen the welcome message
+async function markWelcomeSeen(phone) {
+  await pool.query(
+    `
+    INSERT INTO users (phone, has_seen_welcome)
+    VALUES ($1, true)
+    ON CONFLICT (phone) 
+    DO UPDATE SET has_seen_welcome = true
+    `,
+    [phone]
+  );
+}
+
+// Check if this is the first time a phone number is using the bot
+// (kept for backward compatibility, but now uses has_seen_welcome)
+async function isFirstTimeUser(phone) {
+  const seenWelcome = await hasSeenWelcome(phone);
+  return !seenWelcome;
 }
 
 module.exports = {
@@ -150,5 +178,7 @@ module.exports = {
   deleteBirthday,
   updateBirthday,
   updateBirthdayName,
-  isFirstTimeUser
+  isFirstTimeUser,
+  hasSeenWelcome,
+  markWelcomeSeen
 };

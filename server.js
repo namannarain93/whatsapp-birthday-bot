@@ -729,7 +729,7 @@ app.post('/webhook', async (req, res) => {
     // New users already got welcome at the beginning and returned early
     // Greetings like "hi" or "hello" from existing users fall through to here
     const help = await safeRewrite(
-      'You can tell me a birthday like this: Tanni Feb 9 🎂 (If you are stuck, type help)'
+      'You can tell me a birthday like this: Tanni Feb 9 🎂\nNot sure what to do? Just type help.'
     );
     await sendWhatsAppMessage(phone, help);
     return res.sendStatus(200);

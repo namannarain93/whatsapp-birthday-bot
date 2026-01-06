@@ -79,13 +79,27 @@ async function getAllBirthdays(phone) {
 
 // Delete birthday
 async function deleteBirthday(phone, name) {
-  await pool.query(
+  const res = await pool.query(
     `
     DELETE FROM birthdays
     WHERE phone = $1 AND LOWER(name) = LOWER($2)
     `,
     [phone, name]
   );
+  return res.rowCount > 0;
+}
+
+// Verify birthday exists (for post-delete verification)
+async function birthdayExistsByName(phone, name) {
+  const res = await pool.query(
+    `
+    SELECT 1 FROM birthdays
+    WHERE phone = $1 AND LOWER(name) = LOWER($2)
+    LIMIT 1
+    `,
+    [phone, name]
+  );
+  return res.rowCount > 0;
 }
 
 // Update birthday
@@ -130,6 +144,7 @@ async function isFirstTimeUser(phone) {
 module.exports = {
   saveBirthday,
   birthdayExists,
+  birthdayExistsByName,
   getBirthdaysForMonth,
   getAllBirthdays,
   deleteBirthday,

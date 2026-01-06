@@ -7,6 +7,7 @@ const app = express();
 const {
   saveBirthday,
   birthdayExists,
+  birthdayExistsByName,
   getBirthdaysForMonth,
   getAllBirthdays,
   deleteBirthday,
@@ -216,6 +217,38 @@ function parseNameAndDate(message) {
   if (!name) return null;
 
   return { name, day, month: monthShort };
+}
+
+// Extract clean name(s) from delete input, stripping dates and formatting
+// Handles cases like:
+// - "21 – Abcd Bcda, Jun 2, Kpcd, Jan 3" → ["Abcd Bcda", "Kpcd"]
+// - "Abcd Bcda" → ["Abcd Bcda"]
+// - "delete Abcd Bcda, Kpcd" → ["Abcd Bcda", "Kpcd"]
+function extractNamesFromDeleteInput(input) {
+  if (!input || !input.trim()) return [];
+
+  let cleaned = input.trim();
+
+  // Remove date patterns like "21 –", "21-", "Jun 2", "June 2", "21/04", etc.
+  cleaned = cleaned.replace(/\d{1,2}\s*[–-]\s*/g, ''); // "21 –" or "21-"
+  cleaned = cleaned.replace(/\b\d{1,2}\s*[\/-]\s*\d{1,2}\b/g, ''); // "21/04" or "21-04"
+  
+  // Remove month-day patterns like "Jun 2", "June 2", "2 Jun"
+  const monthPattern = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b/gi;
+  cleaned = cleaned.replace(monthPattern, '');
+  cleaned = cleaned.replace(/\b\d{1,2}\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/gi, '');
+
+  // Split by comma and clean each part
+  const parts = cleaned.split(',').map(p => p.trim()).filter(p => p.length > 0);
+  
+  // Further clean each part: remove any remaining date-like patterns
+  return parts.map(part => {
+    // Remove any remaining numbers that look like dates
+    part = part.replace(/\b\d{1,2}\b/g, '').trim();
+    // Remove extra spaces and clean up
+    part = part.replace(/\s+/g, ' ').trim();
+    return part;
+  }).filter(p => p.length > 0);
 }
 
 // Format birthdays list in chronological calendar order
@@ -455,10 +488,43 @@ app.post('/webhook', async (req, res) => {
     }
 
     if (parsed.intent === 'delete') {
-      const name = parsed.name.trim();
-      await deleteBirthday(phone, name);
-      const reply = await safeRewrite(`I've removed ${name}'s birthday.`);
-      await sendWhatsAppMessage(phone, reply);
+      const inputName = parsed.name.trim();
+      const namesToTry = extractNamesFromDeleteInput(inputName);
+      
+      if (namesToTry.length === 0) {
+        const reply = await safeRewrite('I could not find this birthday. Please try again.');
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
+
+      const deleted = [];
+      const notFound = [];
+
+      for (const name of namesToTry) {
+        const wasDeleted = await deleteBirthday(phone, name);
+        if (wasDeleted) {
+          // Verify deletion succeeded
+          const stillExists = await birthdayExistsByName(phone, name);
+          if (!stillExists) {
+            deleted.push(name);
+          } else {
+            notFound.push(name);
+          }
+        } else {
+          notFound.push(name);
+        }
+      }
+
+      if (deleted.length > 0) {
+        const replyText = deleted.length === 1
+          ? `I've removed ${deleted[0]}'s birthday.`
+          : `I've removed ${deleted.length} birthday${deleted.length > 1 ? 's' : ''}: ${deleted.join(', ')}.`;
+        const reply = await safeRewrite(replyText);
+        await sendWhatsAppMessage(phone, reply);
+      } else {
+        const reply = await safeRewrite('I could not find this birthday. Please try again.');
+        await sendWhatsAppMessage(phone, reply);
+      }
       return res.sendStatus(200);
     }
 
@@ -545,9 +611,43 @@ app.post('/webhook', async (req, res) => {
     // 3️⃣ Delete
     const deleteMatch = lowerMessage.match(/^(?:delete|remove)\s+(.+)$/);
     if (deleteMatch) {
-      await deleteBirthday(phone, deleteMatch[1].trim());
-      const reply = await safeRewrite(`I've removed ${deleteMatch[1]}'s birthday.`);
-      await sendWhatsAppMessage(phone, reply);
+      const inputName = deleteMatch[1].trim();
+      const namesToTry = extractNamesFromDeleteInput(inputName);
+      
+      if (namesToTry.length === 0) {
+        const reply = await safeRewrite('I could not find this birthday. Please try again.');
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
+
+      const deleted = [];
+      const notFound = [];
+
+      for (const name of namesToTry) {
+        const wasDeleted = await deleteBirthday(phone, name);
+        if (wasDeleted) {
+          // Verify deletion succeeded
+          const stillExists = await birthdayExistsByName(phone, name);
+          if (!stillExists) {
+            deleted.push(name);
+          } else {
+            notFound.push(name);
+          }
+        } else {
+          notFound.push(name);
+        }
+      }
+
+      if (deleted.length > 0) {
+        const replyText = deleted.length === 1
+          ? `I've removed ${deleted[0]}'s birthday.`
+          : `I've removed ${deleted.length} birthday${deleted.length > 1 ? 's' : ''}: ${deleted.join(', ')}.`;
+        const reply = await safeRewrite(replyText);
+        await sendWhatsAppMessage(phone, reply);
+      } else {
+        const reply = await safeRewrite('I could not find this birthday. Please try again.');
+        await sendWhatsAppMessage(phone, reply);
+      }
       return res.sendStatus(200);
     }
 

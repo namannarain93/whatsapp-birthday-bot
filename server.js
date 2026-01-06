@@ -51,6 +51,99 @@ function getCurrentMonthAbbrev() {
   return abbrevs[now.getMonth()];
 }
 
+// Fixed month order map: Jan=1, Feb=2, ..., Dec=12
+const MONTH_ORDER = {
+  Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+  Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
+};
+
+// Short month to full month name mapping
+const MONTH_NAMES = {
+  Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April',
+  May: 'May', Jun: 'June', Jul: 'July', Aug: 'August',
+  Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December'
+};
+
+// Reverse mapping: full name to short
+const FULL_TO_SHORT = {};
+Object.keys(MONTH_NAMES).forEach(short => {
+  FULL_TO_SHORT[MONTH_NAMES[short]] = short;
+});
+
+// Normalize month string to get its order number (1-12)
+function getMonthOrderNumber(monthStr) {
+  // If it's already a short form (Jan, Feb, etc.)
+  if (MONTH_ORDER[monthStr]) {
+    return MONTH_ORDER[monthStr];
+  }
+  // If it's a full name (January, February, etc.), convert to short first
+  const short = FULL_TO_SHORT[monthStr];
+  if (short && MONTH_ORDER[short]) {
+    return MONTH_ORDER[short];
+  }
+  // Fallback for unknown months
+  return 99;
+}
+
+// Normalize month string to full month name for display
+function getFullMonthName(monthStr) {
+  // If it's already a full name
+  if (FULL_TO_SHORT[monthStr]) {
+    return monthStr;
+  }
+  // If it's a short form, convert to full
+  if (MONTH_NAMES[monthStr]) {
+    return MONTH_NAMES[monthStr];
+  }
+  // Fallback
+  return monthStr;
+}
+
+// Format birthdays list in chronological order
+function formatBirthdaysChronologically(birthdays) {
+  if (birthdays.length === 0) {
+    return '';
+  }
+
+  // Sort by month order (1-12) then by day
+  const sorted = [...birthdays].sort((a, b) => {
+    const monthOrderA = getMonthOrderNumber(a.month);
+    const monthOrderB = getMonthOrderNumber(b.month);
+    if (monthOrderA !== monthOrderB) {
+      return monthOrderA - monthOrderB;
+    }
+    return a.day - b.day;
+  });
+
+  // Group by full month name
+  const grouped = {};
+  sorted.forEach(b => {
+    const fullMonth = getFullMonthName(b.month);
+    if (!grouped[fullMonth]) {
+      grouped[fullMonth] = [];
+    }
+    grouped[fullMonth].push(b);
+  });
+
+  // Get all months in chronological order
+  const allMonths = Object.keys(grouped).sort((a, b) => {
+    return getMonthOrderNumber(a) - getMonthOrderNumber(b);
+  });
+
+  // Build formatted string
+  let result = '🎂 BIRTHDAYS 🎂\n\n';
+  allMonths.forEach(month => {
+    result += `${month}\n`;
+    grouped[month].forEach(b => {
+      result += `• ${b.day} – ${b.name}\n`;
+    });
+    result += '\n';
+  });
+
+  // Remove trailing newline and return
+  return result.trim();
+}
+
 app.use(express.json());
 
 app.get('/webhook', (req, res) => {
@@ -136,74 +229,8 @@ app.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Month order map
-      const monthOrder = {
-        Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
-        Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
-      };
-
-      // Short month to full month name mapping
-      const monthNames = {
-        Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April',
-        May: 'May', Jun: 'June', Jul: 'July', Aug: 'August',
-        Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December'
-      };
-
-      // Reverse mapping: full name to short
-      const fullToShort = {};
-      Object.keys(monthNames).forEach(short => {
-        fullToShort[monthNames[short]] = short;
-      });
-
-      // Normalize month to short form for sorting
-      const getMonthOrder = (month) => {
-        if (monthOrder[month]) return monthOrder[month];
-        const short = fullToShort[month];
-        return monthOrder[short] || 99;
-      };
-
-      // Get full month name for display
-      const getFullMonth = (month) => {
-        if (monthNames[month]) return monthNames[month];
-        if (fullToShort[month]) return month; // already full name
-        return month; // fallback
-      };
-
-      // Sort chronologically by month order then day
-      const sorted = birthdays.sort((a, b) => {
-        const monthA = getMonthOrder(a.month);
-        const monthB = getMonthOrder(b.month);
-        if (monthA !== monthB) return monthA - monthB;
-        return a.day - b.day;
-      });
-
-      // Group by full month name
-      const grouped = {};
-      sorted.forEach(b => {
-        const fullMonth = getFullMonth(b.month);
-        if (!grouped[fullMonth]) {
-          grouped[fullMonth] = [];
-        }
-        grouped[fullMonth].push(b);
-      });
-
-      // Build reply string
-      let reply = '🎂 BIRTHDAYS 🎂\n\n';
-      const orderedMonths = Object.keys(grouped).sort((a, b) => {
-        const shortA = fullToShort[a] || a;
-        const shortB = fullToShort[b] || b;
-        return (monthOrder[shortA] || 99) - (monthOrder[shortB] || 99);
-      });
-
-      orderedMonths.forEach(month => {
-        reply += `${month}\n`;
-        grouped[month].forEach(b => {
-          reply += `• ${b.day} – ${b.name}\n`;
-        });
-        reply += '\n';
-      });
-
-      reply = await safeRewrite(reply.trim());
+      const formatted = formatBirthdaysChronologically(birthdays);
+      const reply = await safeRewrite(formatted);
       await sendWhatsAppMessage(phone, reply);
       return res.sendStatus(200);
     }
@@ -240,74 +267,8 @@ app.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Month order map
-      const monthOrder = {
-        Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
-        Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
-      };
-
-      // Short month to full month name mapping
-      const monthNames = {
-        Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April',
-        May: 'May', Jun: 'June', Jul: 'July', Aug: 'August',
-        Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December'
-      };
-
-      // Reverse mapping: full name to short
-      const fullToShort = {};
-      Object.keys(monthNames).forEach(short => {
-        fullToShort[monthNames[short]] = short;
-      });
-
-      // Normalize month to short form for sorting
-      const getMonthOrder = (month) => {
-        if (monthOrder[month]) return monthOrder[month];
-        const short = fullToShort[month];
-        return monthOrder[short] || 99;
-      };
-
-      // Get full month name for display
-      const getFullMonth = (month) => {
-        if (monthNames[month]) return monthNames[month];
-        if (fullToShort[month]) return month; // already full name
-        return month; // fallback
-      };
-
-      // Sort chronologically by month order then day
-      const sorted = birthdays.sort((a, b) => {
-        const monthA = getMonthOrder(a.month);
-        const monthB = getMonthOrder(b.month);
-        if (monthA !== monthB) return monthA - monthB;
-        return a.day - b.day;
-      });
-
-      // Group by full month name
-      const grouped = {};
-      sorted.forEach(b => {
-        const fullMonth = getFullMonth(b.month);
-        if (!grouped[fullMonth]) {
-          grouped[fullMonth] = [];
-        }
-        grouped[fullMonth].push(b);
-      });
-
-      // Build reply string
-      let reply = '🎂 BIRTHDAYS 🎂\n\n';
-      const orderedMonths = Object.keys(grouped).sort((a, b) => {
-        const shortA = fullToShort[a] || a;
-        const shortB = fullToShort[b] || b;
-        return (monthOrder[shortA] || 99) - (monthOrder[shortB] || 99);
-      });
-
-      orderedMonths.forEach(month => {
-        reply += `${month}\n`;
-        grouped[month].forEach(b => {
-          reply += `• ${b.day} – ${b.name}\n`;
-        });
-        reply += '\n';
-      });
-
-      reply = await safeRewrite(reply.trim());
+      const formatted = formatBirthdaysChronologically(birthdays);
+      const reply = await safeRewrite(formatted);
       await sendWhatsAppMessage(phone, reply);
       return res.sendStatus(200);
     }

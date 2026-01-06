@@ -521,7 +521,7 @@ app.post('/webhook', async (req, res) => {
 
     // 6️⃣ Fallback
     const help = await safeRewrite(
-      'You can tell me a birthday like this: Tanni Feb 9 🎂'
+      'You can tell me a birthday like this: Tanni Feb 9 🎂\nIn case you are stuck, just type: help'
     );
     await sendWhatsAppMessage(phone, help);
     return res.sendStatus(200);

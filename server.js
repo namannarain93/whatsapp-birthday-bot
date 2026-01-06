@@ -218,109 +218,6 @@ function parseNameAndDate(message) {
   return { name, day, month: monthShort };
 }
 
-// Map canonical month (lowercase full) to short display form, e.g. "january" -> "Jan"
-const CANONICAL_TO_SHORT = {
-  january: 'Jan',
-  february: 'Feb',
-  march: 'Mar',
-  april: 'Apr',
-  may: 'May',
-  june: 'Jun',
-  july: 'Jul',
-  august: 'Aug',
-  september: 'Sep',
-  october: 'Oct',
-  november: 'Nov',
-  december: 'Dec'
-};
-
-// Normalize any month token (word or number) to a short month like "Jan"
-function normalizeMonthToShort(token) {
-  if (token == null) return null;
-  const raw = token.toString().trim().toLowerCase();
-  if (!raw) return null;
-
-  // Numeric month, e.g. "1", "01", "12"
-  if (/^\d{1,2}$/.test(raw)) {
-    const num = parseInt(raw, 10);
-    const canonical = Object.keys(MONTH_ORDER).find(
-      key => MONTH_ORDER[key] === num
-    );
-    return canonical ? CANONICAL_TO_SHORT[canonical] : null;
-  }
-
-  // Word month (short or full)
-  const canonical = MONTH_CANONICAL[raw];
-  if (!canonical) return null;
-  return CANONICAL_TO_SHORT[canonical] || null;
-}
-
-// Parse flexible "name + date" messages into { name, day, month }
-function parseNameAndDate(message) {
-  if (!message || !message.trim()) return null;
-
-  const original = message;
-  const lower = message.toLowerCase();
-
-  let day = null;
-  let monthShort = null;
-  let working = original;
-
-  // 1) Look for numeric date formats like "14/12" or "14-12"
-  const numericMatch = lower.match(/\b(\d{1,2})[\/-](\d{1,2})\b/);
-  if (numericMatch) {
-    const d = parseInt(numericMatch[1], 10);
-    const m = parseInt(numericMatch[2], 10);
-    if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
-      day = d;
-      monthShort = normalizeMonthToShort(m.toString());
-      if (!monthShort) return null;
-      const re = new RegExp(numericMatch[0], 'i');
-      working = working.replace(re, ' ');
-    }
-  }
-
-  // 2) Look for month words like "Dec", "December" if month not yet found
-  if (!monthShort) {
-    const monthWordRegex =
-      /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
-    const monthWordMatch = lower.match(monthWordRegex);
-    if (monthWordMatch) {
-      monthShort = normalizeMonthToShort(monthWordMatch[1]);
-      if (!monthShort) return null;
-      const re = new RegExp(monthWordMatch[0], 'i');
-      working = working.replace(re, ' ');
-    }
-  }
-
-  // 3) Look for a standalone day like "14", "14th", "1st" if day not yet found
-  if (day == null) {
-    const dayRegex = /\b(\d{1,2})(st|nd|rd|th)?\b/;
-    const dayMatch = lower.match(dayRegex);
-    if (dayMatch) {
-      const d = parseInt(dayMatch[1], 10);
-      if (d >= 1 && d <= 31) {
-        day = d;
-        const re = new RegExp(dayMatch[0], 'i');
-        working = working.replace(re, ' ');
-      }
-    }
-  }
-
-  // 4) If we have day but still no month, try numeric month in patterns like "Dec 14" vs "14 Dec"
-  // (Handled above via word + numeric parsing; if still no month, we give up)
-
-  if (day == null || !monthShort) {
-    return null;
-  }
-
-  // Whatever remains (minus commas and extra spaces) is treated as the name
-  const name = working.replace(/[,]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!name) return null;
-
-  return { name, day, month: monthShort };
-}
-
 // Format birthdays list in chronological calendar order
 function formatBirthdaysChronologically(birthdays) {
   if (!birthdays || birthdays.length === 0) {
@@ -569,7 +466,7 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 4️⃣ Update (date)
+    // 4️⃣ Update
     const updateMatch = lowerMessage.match(
       /^(?:change|update)\s+(.+?)\s+(?:to|birthday to)\s+([a-z]+)\s+(\d+)$/i
     );
@@ -578,24 +475,6 @@ app.post('/webhook', async (req, res) => {
       await updateBirthday(phone, name.trim(), parseInt(day), month);
       const reply = await safeRewrite(`I've updated ${name}'s birthday to ${month} ${day}.`);
       await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
-    }
-
-    // 4️⃣ Rename (name only)
-    const renameMatch = lowerMessage.match(
-      /^(?:rename|change name|update name|edit name)\s+(.+?)\s+to\s+(.+)$/i
-    );
-    if (renameMatch) {
-      const [, oldName, newName] = renameMatch;
-      const updated = await updateBirthdayName(phone, oldName.trim(), newName.trim());
-      
-      if (updated) {
-        const reply = await safeRewrite(`I've renamed ${oldName.trim()} to ${newName.trim()}.`);
-        await sendWhatsAppMessage(phone, reply);
-      } else {
-        const reply = await safeRewrite(`I couldn't find ${oldName.trim()}'s birthday.`);
-        await sendWhatsAppMessage(phone, reply);
-      }
       return res.sendStatus(200);
     }
 

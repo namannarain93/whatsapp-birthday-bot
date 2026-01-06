@@ -137,6 +137,31 @@ async function updateBirthdayName(phone, oldName, newName) {
   return res.rowCount > 0;
 }
 
+// Check if user exists in users table
+async function userExists(phone) {
+  const res = await pool.query(
+    `
+    SELECT 1 FROM users
+    WHERE phone = $1
+    LIMIT 1
+    `,
+    [phone]
+  );
+  return res.rowCount > 0;
+}
+
+// Onboard a new user (insert into users table with has_seen_welcome = true)
+async function onboardUser(phone) {
+  await pool.query(
+    `
+    INSERT INTO users (phone, has_seen_welcome)
+    VALUES ($1, true)
+    ON CONFLICT (phone) DO NOTHING
+    `,
+    [phone]
+  );
+}
+
 // Check if user has seen the welcome message
 async function hasSeenWelcome(phone) {
   const res = await pool.query(
@@ -180,5 +205,7 @@ module.exports = {
   updateBirthdayName,
   isFirstTimeUser,
   hasSeenWelcome,
-  markWelcomeSeen
+  markWelcomeSeen,
+  userExists,
+  onboardUser
 };

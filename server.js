@@ -15,7 +15,9 @@ const {
   updateBirthdayName,
   isFirstTimeUser,
   hasSeenWelcome,
-  markWelcomeSeen
+  markWelcomeSeen,
+  userExists,
+  onboardUser
 } = require('./db.js');
 
 app.use((req, res, next) => {
@@ -349,6 +351,19 @@ app.post('/webhook', async (req, res) => {
     console.log('📞 FROM:', phone);
     console.log('💬 MESSAGE:', message);
 
+    // 0️⃣ FIRST-TIME USER ONBOARDING (check at the very beginning, before any intent parsing)
+    // This ensures welcome is sent ONLY once, the first time a phone number ever messages the bot
+    // Greetings like "hi" or "hello" from existing users will NOT trigger welcome
+    const exists = await userExists(phone);
+    if (!exists) {
+      // New user: onboard them and send welcome message
+      await onboardUser(phone);
+      const reply = await safeRewrite(WELCOME_MESSAGE);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+    // Existing user: continue with normal intent parsing logic below
+
     // Helper function to process a single line for saving
     async function processSaveLine(line) {
       const trimmed = line.trim();
@@ -442,13 +457,8 @@ app.post('/webhook', async (req, res) => {
     if (lowerMessage.includes('help')) {
       const reply = await safeRewrite(WELCOME_MESSAGE);
       await sendWhatsAppMessage(phone, reply);
-      // Mark as having seen welcome if they explicitly ask for help
-      await markWelcomeSeen(phone);
       return res.sendStatus(200);
     }
-
-    // Check if user has seen welcome (for fallback message logic)
-    const seenWelcome = await hasSeenWelcome(phone);
 
     // LLM Intent Parsing (before regex fallback)
     const parsed = await parseIntentWithLLM(message);
@@ -522,15 +532,6 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 0️⃣ First-time user welcome flow (AFTER list intents to prevent welcome on "complete list")
-    // Only show welcome to users who haven't seen it yet
-    if (!seenWelcome) {
-      const reply = await safeRewrite(WELCOME_MESSAGE);
-      await sendWhatsAppMessage(phone, reply);
-      // Mark user as having seen welcome after sending it
-      await markWelcomeSeen(phone);
-      return res.sendStatus(200);
-    }
 
     // Handle LLM-parsed intents
     if (parsed.intent === 'save') {
@@ -724,18 +725,13 @@ app.post('/webhook', async (req, res) => {
     }
 
     // 6️⃣ Fallback
-    // Existing users get a short help hint, new users already got full welcome above
-    if (seenWelcome) {
-      // Existing user: show short help hint instead of full welcome
-      const help = await safeRewrite("Type 'help' if you're stuck 😊");
-      await sendWhatsAppMessage(phone, help);
-    } else {
-      // This shouldn't happen (new users get welcome above), but fallback just in case
-      const help = await safeRewrite(
-        'You can tell me a birthday like this: Tanni Feb 9 🎂\nIn case you are stuck, just type: help'
-      );
-      await sendWhatsAppMessage(phone, help);
-    }
+    // All existing users (who reach here) get the standard fallback message
+    // New users already got welcome at the beginning and returned early
+    // Greetings like "hi" or "hello" from existing users fall through to here
+    const help = await safeRewrite(
+      'You can tell me a birthday like this: Tanni Feb 9 🎂 (If you are stuck, type help)'
+    );
+    await sendWhatsAppMessage(phone, help);
     return res.sendStatus(200);
 
   } catch (err) {

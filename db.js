@@ -139,6 +139,105 @@ async function getBirthdaysForDate(phone, day, month) {
   return res.rows;
 }
 
+// Get birthday by name (case-insensitive, partial match)
+async function getBirthdayByName(phone, name) {
+  const res = await pool.query(
+    `
+    SELECT name, day, month
+    FROM birthdays
+    WHERE phone = $1 AND LOWER(name) LIKE LOWER('%' || $2 || '%')
+    ORDER BY name
+    LIMIT 10
+    `,
+    [phone, name]
+  );
+  return res.rows;
+}
+
+// Get birthdays by date (day and month)
+async function getBirthdaysByDate(phone, day, month) {
+  const res = await pool.query(
+    `
+    SELECT name, day, month
+    FROM birthdays
+    WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
+    ORDER BY name
+    `,
+    [phone, day, month]
+  );
+  return res.rows;
+}
+
+// Get upcoming birthdays within a date range (handles year wrap)
+async function getUpcomingBirthdays(phone, fromDay, fromMonth, toDay, toMonth) {
+  // Map month names to numbers for comparison
+  const monthToNum = {
+    'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+    'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+  };
+  
+  const fromMonthNum = monthToNum[fromMonth] || 0;
+  const toMonthNum = monthToNum[toMonth] || 0;
+  
+  // Get all birthdays for this user
+  const allBirthdays = await pool.query(
+    `
+    SELECT name, day, month
+    FROM birthdays
+    WHERE phone = $1
+    ORDER BY month, day
+    `,
+    [phone]
+  );
+  
+  // Helper function to compare dates (month, day) for sorting
+  function dateValue(monthNum, day) {
+    return monthNum * 100 + day;
+  }
+  
+  const fromValue = dateValue(fromMonthNum, fromDay);
+  const toValue = dateValue(toMonthNum, toDay);
+  
+  // Filter birthdays within the range (handling year wrap)
+  const upcoming = [];
+  for (const b of allBirthdays.rows) {
+    const bMonthNum = monthToNum[b.month] || 0;
+    const bDay = b.day;
+    const bValue = dateValue(bMonthNum, bDay);
+    
+    let inRange = false;
+    
+    if (fromMonthNum <= toMonthNum) {
+      // Normal case: same year (e.g., Feb 1 to Mar 15)
+      inRange = bValue >= fromValue && bValue <= toValue;
+    } else {
+      // Year wrap case: crosses year boundary (e.g., Dec 1 to Jan 15)
+      // Birthday is in range if it's >= fromDate OR <= toDate
+      inRange = bValue >= fromValue || bValue <= toValue;
+    }
+    
+    if (inRange) {
+      upcoming.push(b);
+    }
+  }
+  
+  // Sort by nearest date first (considering year wrap)
+  upcoming.sort((a, b) => {
+    const aValue = dateValue(monthToNum[a.month] || 0, a.day);
+    const bValue = dateValue(monthToNum[b.month] || 0, b.day);
+    
+    // If we're in a year wrap scenario, adjust values for comparison
+    if (fromMonthNum > toMonthNum) {
+      const aAdjusted = aValue < fromValue ? aValue + 1200 : aValue;
+      const bAdjusted = bValue < fromValue ? bValue + 1200 : bValue;
+      return aAdjusted - bAdjusted;
+    }
+    return aValue - bValue;
+  });
+  
+  return upcoming;
+}
+
 // Delete birthday
 // Supports both exact match and fuzzy/partial match for corrupted names
 async function deleteBirthday(phone, name) {
@@ -276,6 +375,9 @@ module.exports = {
   getBirthdaysForMonth,
   getAllBirthdays,
   getBirthdaysForDate,
+  getBirthdayByName,
+  getBirthdaysByDate,
+  getUpcomingBirthdays,
   deleteBirthday,
   updateBirthday,
   updateBirthdayName,

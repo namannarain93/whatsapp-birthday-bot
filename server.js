@@ -10,6 +10,9 @@ const {
   birthdayExistsByName,
   getBirthdaysForMonth,
   getAllBirthdays,
+  getBirthdayByName,
+  getBirthdaysByDate,
+  getUpcomingBirthdays,
   deleteBirthday,
   updateBirthday,
   updateBirthdayName,
@@ -766,6 +769,239 @@ app.post('/webhook', async (req, res) => {
         await sendWhatsAppMessage(phone, reply);
         return res.sendStatus(200);
       }
+    }
+
+    // SEARCH FEATURES - Search by name, date, month, and upcoming birthdays
+    
+    // 1️⃣ Search by name (LLM intent)
+    if (parsed.intent === 'search_name' && parsed.name) {
+      const searchName = parsed.name.trim();
+      const results = await getBirthdayByName(phone, searchName);
+      
+      if (results.length === 0) {
+        const reply = await safeRewrite(`I don't have ${searchName}'s birthday saved yet.`);
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
+      
+      if (results.length === 1) {
+        const b = results[0];
+        const reply = await safeRewrite(`${b.name}'s birthday is on ${b.month} ${b.day}.`);
+        await sendWhatsAppMessage(phone, reply);
+      } else {
+        // Multiple matches
+        const list = results.map(b => `${b.name} - ${b.month} ${b.day}`).join('\n');
+        const reply = await safeRewrite(`I found ${results.length} birthdays matching "${searchName}":\n\n${list}`);
+        await sendWhatsAppMessage(phone, reply);
+      }
+      return res.sendStatus(200);
+    }
+    
+    // 2️⃣ Search by date (LLM intent)
+    if (parsed.intent === 'search_date' && parsed.day && parsed.month) {
+      const day = parseInt(parsed.day);
+      const month = parsed.month;
+      const normalizedMonth = normalizeMonthToShort(month);
+      
+      if (!normalizedMonth) {
+        // Invalid month, fall through
+      } else {
+        const results = await getBirthdaysByDate(phone, day, normalizedMonth);
+        
+        if (results.length === 0) {
+          const reply = await safeRewrite(`No birthdays on ${normalizedMonth} ${day}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else if (results.length === 1) {
+          const reply = await safeRewrite(`${results[0].name}'s birthday is on ${normalizedMonth} ${day}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else {
+          const names = results.map(b => b.name).join(', ');
+          const reply = await safeRewrite(`Birthdays on ${normalizedMonth} ${day}: ${names}`);
+          await sendWhatsAppMessage(phone, reply);
+        }
+        return res.sendStatus(200);
+      }
+    }
+    
+    // 3️⃣ Search by month (LLM intent)
+    if (parsed.intent === 'search_month' && parsed.month) {
+      const month = parsed.month;
+      const normalizedMonth = normalizeMonthToShort(month);
+      
+      if (!normalizedMonth) {
+        // Invalid month, fall through
+      } else {
+        const birthdays = await getBirthdaysForMonth(phone, normalizedMonth);
+        const monthName = normalizedMonth.charAt(0).toUpperCase() + normalizedMonth.slice(1);
+        
+        if (birthdays.length === 0) {
+          const reply = await safeRewrite(`I don't have any birthdays saved for ${monthName}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else {
+          const list = birthdays.map(b => `• ${b.day} – ${b.name}`).join('\n');
+          const reply = await safeRewrite(`Birthdays in ${monthName}:\n\n${list}`);
+          await sendWhatsAppMessage(phone, reply);
+        }
+        return res.sendStatus(200);
+      }
+    }
+    
+    // 4️⃣ Upcoming birthdays (LLM intent)
+    if (parsed.intent === 'upcoming') {
+      const now = new Date();
+      const today = now.getDate();
+      const currentMonthNum = now.getMonth() + 1;
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const currentMonth = monthNames[currentMonthNum - 1];
+      
+      // Calculate 30 days from now
+      const futureDate = new Date(now);
+      futureDate.setDate(futureDate.getDate() + 30);
+      const futureDay = futureDate.getDate();
+      const futureMonthNum = futureDate.getMonth() + 1;
+      const futureMonth = monthNames[futureMonthNum - 1];
+      
+      const upcoming = await getUpcomingBirthdays(phone, today, currentMonth, futureDay, futureMonth);
+      
+      if (upcoming.length === 0) {
+        const reply = await safeRewrite('No upcoming birthdays in the next 30 days.');
+        await sendWhatsAppMessage(phone, reply);
+      } else {
+        const list = upcoming.map(b => `• ${b.day} ${b.month} – ${b.name}`).join('\n');
+        const reply = await safeRewrite(`Here are the upcoming birthdays:\n\n${list}`);
+        await sendWhatsAppMessage(phone, reply);
+      }
+      return res.sendStatus(200);
+    }
+    
+    // REGEX FALLBACKS for search features
+    
+    // Search by name (regex fallback)
+    const searchNameMatch = lowerMessage.match(/(?:when is|show me|birthday of|birthday)\s+([a-z\s]+?)(?:\s+birthday|\?|$)/i);
+    if (searchNameMatch) {
+      const searchName = searchNameMatch[1].trim();
+      if (searchName && searchName.length > 0) {
+        const results = await getBirthdayByName(phone, searchName);
+        
+        if (results.length === 0) {
+          const reply = await safeRewrite(`I don't have ${searchName}'s birthday saved yet.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else if (results.length === 1) {
+          const b = results[0];
+          const reply = await safeRewrite(`${b.name}'s birthday is on ${b.month} ${b.day}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else {
+          const list = results.map(b => `${b.name} - ${b.month} ${b.day}`).join('\n');
+          const reply = await safeRewrite(`I found ${results.length} birthdays matching "${searchName}":\n\n${list}`);
+          await sendWhatsAppMessage(phone, reply);
+        }
+        return res.sendStatus(200);
+      }
+    }
+    
+    // Search by date (regex fallback)
+    const searchDateMatch = lowerMessage.match(/(?:who has birthday on|birthdays on|who is born on)\s+(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)/i);
+    if (searchDateMatch) {
+      const day = parseInt(searchDateMatch[1]);
+      const month = searchDateMatch[2];
+      const normalizedMonth = normalizeMonthToShort(month);
+      
+      if (normalizedMonth) {
+        const results = await getBirthdaysByDate(phone, day, normalizedMonth);
+        
+        if (results.length === 0) {
+          const reply = await safeRewrite(`No birthdays on ${normalizedMonth} ${day}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else if (results.length === 1) {
+          const reply = await safeRewrite(`${results[0].name}'s birthday is on ${normalizedMonth} ${day}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else {
+          const names = results.map(b => b.name).join(', ');
+          const reply = await safeRewrite(`Birthdays on ${normalizedMonth} ${day}: ${names}`);
+          await sendWhatsAppMessage(phone, reply);
+        }
+        return res.sendStatus(200);
+      }
+    }
+    
+    // Search by date (numeric format: 14/12, 2/6)
+    const numericDateMatch = lowerMessage.match(/(?:birthdays on|who has birthday on)\s+(\d{1,2})[\/-](\d{1,2})/i);
+    if (numericDateMatch) {
+      const day = parseInt(numericDateMatch[1]);
+      const monthNum = parseInt(numericDateMatch[2]);
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      if (monthNum >= 1 && monthNum <= 12) {
+        const normalizedMonth = monthNames[monthNum - 1];
+        const results = await getBirthdaysByDate(phone, day, normalizedMonth);
+        
+        if (results.length === 0) {
+          const reply = await safeRewrite(`No birthdays on ${normalizedMonth} ${day}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else if (results.length === 1) {
+          const reply = await safeRewrite(`${results[0].name}'s birthday is on ${normalizedMonth} ${day}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else {
+          const names = results.map(b => b.name).join(', ');
+          const reply = await safeRewrite(`Birthdays on ${normalizedMonth} ${day}: ${names}`);
+          await sendWhatsAppMessage(phone, reply);
+        }
+        return res.sendStatus(200);
+      }
+    }
+    
+    // Search by month (regex fallback)
+    const searchMonthMatch = lowerMessage.match(/(?:show me|who has birthday in|birthdays in)\s+([a-z]+)/i);
+    if (searchMonthMatch) {
+      const month = searchMonthMatch[1];
+      const normalizedMonth = normalizeMonthToShort(month);
+      
+      if (normalizedMonth) {
+        const birthdays = await getBirthdaysForMonth(phone, normalizedMonth);
+        const monthName = normalizedMonth.charAt(0).toUpperCase() + normalizedMonth.slice(1);
+        
+        if (birthdays.length === 0) {
+          const reply = await safeRewrite(`I don't have any birthdays saved for ${monthName}.`);
+          await sendWhatsAppMessage(phone, reply);
+        } else {
+          const list = birthdays.map(b => `• ${b.day} – ${b.name}`).join('\n');
+          const reply = await safeRewrite(`Birthdays in ${monthName}:\n\n${list}`);
+          await sendWhatsAppMessage(phone, reply);
+        }
+        return res.sendStatus(200);
+      }
+    }
+    
+    // Upcoming birthdays (regex fallback)
+    if (lowerMessage.includes('upcoming birthdays') || 
+        lowerMessage.includes('birthdays coming up') ||
+        lowerMessage.includes('birthdays in next 30 days') ||
+        lowerMessage.includes('who has birthday soon')) {
+      const now = new Date();
+      const today = now.getDate();
+      const currentMonthNum = now.getMonth() + 1;
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const currentMonth = monthNames[currentMonthNum - 1];
+      
+      const futureDate = new Date(now);
+      futureDate.setDate(futureDate.getDate() + 30);
+      const futureDay = futureDate.getDate();
+      const futureMonthNum = futureDate.getMonth() + 1;
+      const futureMonth = monthNames[futureMonthNum - 1];
+      
+      const upcoming = await getUpcomingBirthdays(phone, today, currentMonth, futureDay, futureMonth);
+      
+      if (upcoming.length === 0) {
+        const reply = await safeRewrite('No upcoming birthdays in the next 30 days.');
+        await sendWhatsAppMessage(phone, reply);
+      } else {
+        const list = upcoming.map(b => `• ${b.day} ${b.month} – ${b.name}`).join('\n');
+        const reply = await safeRewrite(`Here are the upcoming birthdays:\n\n${list}`);
+        await sendWhatsAppMessage(phone, reply);
+      }
+      return res.sendStatus(200);
     }
 
     // 6️⃣ Fallback

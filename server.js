@@ -4,7 +4,16 @@ const { rewriteForElderlyUser, parseIntentWithLLM } = require('./llm.js');
 const fetch = (...args) =>
   import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const app = express();
-const { saveBirthday, getBirthdaysForMonth, getAllBirthdays, birthdayExists, deleteBirthday, updateBirthday } = require('./db.js');
+const {
+  saveBirthday,
+  birthdayExists,
+  getBirthdaysForMonth,
+  getAllBirthdays,
+  deleteBirthday,
+  updateBirthday,
+  updateBirthdayName,
+  isFirstTimeUser
+} = require('./db.js');
 
 app.use((req, res, next) => {
   console.log('⚡ INCOMING REQUEST:', req.method, req.path);
@@ -51,98 +60,328 @@ function getCurrentMonthAbbrev() {
   return abbrevs[now.getMonth()];
 }
 
-// Fixed month order map: Jan=1, Feb=2, ..., Dec=12
+// Deterministic month order map using full month names (lowercase)
 const MONTH_ORDER = {
-  Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
-  Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
+  january: 1,
+  february: 2,
+  march: 3,
+  april: 4,
+  may: 5,
+  june: 6,
+  july: 7,
+  august: 8,
+  september: 9,
+  october: 10,
+  november: 11,
+  december: 12
 };
 
-// Short month to full month name mapping
-const MONTH_NAMES = {
-  Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April',
-  May: 'May', Jun: 'June', Jul: 'July', Aug: 'August',
-  Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December'
+// Map various month spellings (short/full, any case) to canonical lowercase full name
+const MONTH_CANONICAL = {
+  jan: 'january',
+  january: 'january',
+  feb: 'february',
+  february: 'february',
+  mar: 'march',
+  march: 'march',
+  apr: 'april',
+  april: 'april',
+  may: 'may',
+  jun: 'june',
+  june: 'june',
+  jul: 'july',
+  july: 'july',
+  aug: 'august',
+  august: 'august',
+  sep: 'september',
+  sept: 'september',
+  september: 'september',
+  oct: 'october',
+  october: 'october',
+  nov: 'november',
+  november: 'november',
+  dec: 'december',
+  december: 'december'
 };
 
-// Reverse mapping: full name to short
-const FULL_TO_SHORT = {};
-Object.keys(MONTH_NAMES).forEach(short => {
-  FULL_TO_SHORT[MONTH_NAMES[short]] = short;
-});
-
-// Normalize month string to get its order number (1-12)
-function getMonthOrderNumber(monthStr) {
-  // If it's already a short form (Jan, Feb, etc.)
-  if (MONTH_ORDER[monthStr]) {
-    return MONTH_ORDER[monthStr];
-  }
-  // If it's a full name (January, February, etc.), convert to short first
-  const short = FULL_TO_SHORT[monthStr];
-  if (short && MONTH_ORDER[short]) {
-    return MONTH_ORDER[short];
-  }
-  // Fallback for unknown months
-  return 99;
+function normalizeMonthToCanonical(monthStr) {
+  const key = (monthStr || '').toString().trim().toLowerCase();
+  return MONTH_CANONICAL[key] || key;
 }
 
-// Normalize month string to full month name for display
-function getFullMonthName(monthStr) {
-  // If it's already a full name
-  if (FULL_TO_SHORT[monthStr]) {
-    return monthStr;
-  }
-  // If it's a short form, convert to full
-  if (MONTH_NAMES[monthStr]) {
-    return MONTH_NAMES[monthStr];
-  }
-  // Fallback
-  return monthStr;
+function getMonthOrderNumber(canonicalMonth) {
+  return MONTH_ORDER[canonicalMonth] || 99;
 }
 
-// Format birthdays list in chronological order
+function toDisplayMonthName(canonicalMonth) {
+  if (!canonicalMonth) return '';
+  return canonicalMonth.charAt(0).toUpperCase() + canonicalMonth.slice(1);
+}
+
+// Map canonical month (lowercase full) to short display form, e.g. "january" -> "Jan"
+const CANONICAL_TO_SHORT = {
+  january: 'Jan',
+  february: 'Feb',
+  march: 'Mar',
+  april: 'Apr',
+  may: 'May',
+  june: 'Jun',
+  july: 'Jul',
+  august: 'Aug',
+  september: 'Sep',
+  october: 'Oct',
+  november: 'Nov',
+  december: 'Dec'
+};
+
+// Normalize any month token (word or number) to a short month like "Jan"
+function normalizeMonthToShort(token) {
+  if (token == null) return null;
+  const raw = token.toString().trim().toLowerCase();
+  if (!raw) return null;
+
+  // Numeric month, e.g. "1", "01", "12"
+  if (/^\d{1,2}$/.test(raw)) {
+    const num = parseInt(raw, 10);
+    const canonical = Object.keys(MONTH_ORDER).find(
+      key => MONTH_ORDER[key] === num
+    );
+    return canonical ? CANONICAL_TO_SHORT[canonical] : null;
+  }
+
+  // Word month (short or full)
+  const canonical = MONTH_CANONICAL[raw];
+  if (!canonical) return null;
+  return CANONICAL_TO_SHORT[canonical] || null;
+}
+
+// Parse flexible "name + date" messages into { name, day, month }
+function parseNameAndDate(message) {
+  if (!message || !message.trim()) return null;
+
+  const original = message;
+  const lower = message.toLowerCase();
+
+  let day = null;
+  let monthShort = null;
+  let working = original;
+
+  // 1) Look for numeric date formats like "14/12" or "14-12"
+  const numericMatch = lower.match(/\b(\d{1,2})[\/-](\d{1,2})\b/);
+  if (numericMatch) {
+    const d = parseInt(numericMatch[1], 10);
+    const m = parseInt(numericMatch[2], 10);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+      day = d;
+      monthShort = normalizeMonthToShort(m.toString());
+      if (!monthShort) return null;
+      const re = new RegExp(numericMatch[0], 'i');
+      working = working.replace(re, ' ');
+    }
+  }
+
+  // 2) Look for month words like "Dec", "December" if month not yet found
+  if (!monthShort) {
+    const monthWordRegex =
+      /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
+    const monthWordMatch = lower.match(monthWordRegex);
+    if (monthWordMatch) {
+      monthShort = normalizeMonthToShort(monthWordMatch[1]);
+      if (!monthShort) return null;
+      const re = new RegExp(monthWordMatch[0], 'i');
+      working = working.replace(re, ' ');
+    }
+  }
+
+  // 3) Look for a standalone day like "14", "14th", "1st" if day not yet found
+  if (day == null) {
+    const dayRegex = /\b(\d{1,2})(st|nd|rd|th)?\b/;
+    const dayMatch = lower.match(dayRegex);
+    if (dayMatch) {
+      const d = parseInt(dayMatch[1], 10);
+      if (d >= 1 && d <= 31) {
+        day = d;
+        const re = new RegExp(dayMatch[0], 'i');
+        working = working.replace(re, ' ');
+      }
+    }
+  }
+
+  if (day == null || !monthShort) {
+    return null;
+  }
+
+  // Whatever remains (minus commas and extra spaces) is treated as the name
+  const name = working.replace(/[,]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!name) return null;
+
+  return { name, day, month: monthShort };
+}
+
+// Map canonical month (lowercase full) to short display form, e.g. "january" -> "Jan"
+const CANONICAL_TO_SHORT = {
+  january: 'Jan',
+  february: 'Feb',
+  march: 'Mar',
+  april: 'Apr',
+  may: 'May',
+  june: 'Jun',
+  july: 'Jul',
+  august: 'Aug',
+  september: 'Sep',
+  october: 'Oct',
+  november: 'Nov',
+  december: 'Dec'
+};
+
+// Normalize any month token (word or number) to a short month like "Jan"
+function normalizeMonthToShort(token) {
+  if (token == null) return null;
+  const raw = token.toString().trim().toLowerCase();
+  if (!raw) return null;
+
+  // Numeric month, e.g. "1", "01", "12"
+  if (/^\d{1,2}$/.test(raw)) {
+    const num = parseInt(raw, 10);
+    const canonical = Object.keys(MONTH_ORDER).find(
+      key => MONTH_ORDER[key] === num
+    );
+    return canonical ? CANONICAL_TO_SHORT[canonical] : null;
+  }
+
+  // Word month (short or full)
+  const canonical = MONTH_CANONICAL[raw];
+  if (!canonical) return null;
+  return CANONICAL_TO_SHORT[canonical] || null;
+}
+
+// Parse flexible "name + date" messages into { name, day, month }
+function parseNameAndDate(message) {
+  if (!message || !message.trim()) return null;
+
+  const original = message;
+  const lower = message.toLowerCase();
+
+  let day = null;
+  let monthShort = null;
+  let working = original;
+
+  // 1) Look for numeric date formats like "14/12" or "14-12"
+  const numericMatch = lower.match(/\b(\d{1,2})[\/-](\d{1,2})\b/);
+  if (numericMatch) {
+    const d = parseInt(numericMatch[1], 10);
+    const m = parseInt(numericMatch[2], 10);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+      day = d;
+      monthShort = normalizeMonthToShort(m.toString());
+      if (!monthShort) return null;
+      const re = new RegExp(numericMatch[0], 'i');
+      working = working.replace(re, ' ');
+    }
+  }
+
+  // 2) Look for month words like "Dec", "December" if month not yet found
+  if (!monthShort) {
+    const monthWordRegex =
+      /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
+    const monthWordMatch = lower.match(monthWordRegex);
+    if (monthWordMatch) {
+      monthShort = normalizeMonthToShort(monthWordMatch[1]);
+      if (!monthShort) return null;
+      const re = new RegExp(monthWordMatch[0], 'i');
+      working = working.replace(re, ' ');
+    }
+  }
+
+  // 3) Look for a standalone day like "14", "14th", "1st" if day not yet found
+  if (day == null) {
+    const dayRegex = /\b(\d{1,2})(st|nd|rd|th)?\b/;
+    const dayMatch = lower.match(dayRegex);
+    if (dayMatch) {
+      const d = parseInt(dayMatch[1], 10);
+      if (d >= 1 && d <= 31) {
+        day = d;
+        const re = new RegExp(dayMatch[0], 'i');
+        working = working.replace(re, ' ');
+      }
+    }
+  }
+
+  // 4) If we have day but still no month, try numeric month in patterns like "Dec 14" vs "14 Dec"
+  // (Handled above via word + numeric parsing; if still no month, we give up)
+
+  if (day == null || !monthShort) {
+    return null;
+  }
+
+  // Whatever remains (minus commas and extra spaces) is treated as the name
+  const name = working.replace(/[,]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!name) return null;
+
+  return { name, day, month: monthShort };
+}
+
+// Format birthdays list in chronological calendar order
 function formatBirthdaysChronologically(birthdays) {
-  if (birthdays.length === 0) {
+  if (!birthdays || birthdays.length === 0) {
     return '';
   }
 
-  // Sort by month order (1-12) then by day
-  const sorted = [...birthdays].sort((a, b) => {
-    const monthOrderA = getMonthOrderNumber(a.month);
-    const monthOrderB = getMonthOrderNumber(b.month);
-    if (monthOrderA !== monthOrderB) {
-      return monthOrderA - monthOrderB;
-    }
+  // First normalize each birthday's month to canonical form
+  const normalized = birthdays.map(b => ({
+    name: b.name,
+    day: b.day,
+    monthCanonical: normalizeMonthToCanonical(b.month)
+  }));
+
+  // Sort by month index then by day
+  normalized.sort((a, b) => {
+    const orderA = getMonthOrderNumber(a.monthCanonical);
+    const orderB = getMonthOrderNumber(b.monthCanonical);
+    if (orderA !== orderB) return orderA - orderB;
     return a.day - b.day;
   });
 
-  // Group by full month name
+  // Group by canonical month
   const grouped = {};
-  sorted.forEach(b => {
-    const fullMonth = getFullMonthName(b.month);
-    if (!grouped[fullMonth]) {
-      grouped[fullMonth] = [];
-    }
-    grouped[fullMonth].push(b);
+  normalized.forEach(b => {
+    const key = b.monthCanonical;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(b);
   });
 
-  // Get all months in chronological order
-  const allMonths = Object.keys(grouped).sort((a, b) => {
-    return getMonthOrderNumber(a) - getMonthOrderNumber(b);
-  });
+  // Get months in true calendar order
+  const orderedMonths = Object.keys(grouped).sort(
+    (a, b) => getMonthOrderNumber(a) - getMonthOrderNumber(b)
+  );
 
-  // Build formatted string
+  // Build the final string
   let result = '🎂 BIRTHDAYS 🎂\n\n';
-  allMonths.forEach(month => {
-    result += `${month}\n`;
-    grouped[month].forEach(b => {
+  orderedMonths.forEach(monthKey => {
+    const label = toDisplayMonthName(monthKey);
+    if (!label) return;
+    result += `${label}\n`;
+    grouped[monthKey].forEach(b => {
       result += `• ${b.day} – ${b.name}\n`;
     });
     result += '\n';
   });
 
-  // Remove trailing newline and return
   return result.trim();
 }
+
+const WELCOME_MESSAGE =
+  "Hi! 👋 Welcome to the Birthday Bot 🎂\n" +
+  "This is the easiest way to save birthdays so you never forget 😊\n\n" +
+  "To save a birthday, just type:\n" +
+  "Name, Date\n\n" +
+  "Example:\n" +
+  "Papa, 29 Aug\n" +
+  "Tanni, 9 Feb\n\n" +
+  "To see all birthdays, type:\n" +
+  "Complete list\n\n" +
+  "That’s it 👍\n" +
+  "Just send messages like normal WhatsApp. No buttons, no forms.";
 
 app.use(express.json());
 
@@ -178,28 +417,59 @@ app.post('/webhook', async (req, res) => {
     console.log('📞 FROM:', phone);
     console.log('💬 MESSAGE:', message);
 
+    // 0️⃣ Explicit help keyword (always available)
+    if (lowerMessage.includes('help')) {
+      const reply = await safeRewrite(WELCOME_MESSAGE);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    // 0️⃣ First-time user welcome flow
+    const firstTime = await isFirstTimeUser(phone);
+    if (firstTime) {
+      const reply = await safeRewrite(WELCOME_MESSAGE);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
     // LLM Intent Parsing (before regex fallback)
     const parsed = await parseIntentWithLLM(message);
 
     // Handle LLM-parsed intents
     if (parsed.intent === 'save') {
-      const name = parsed.name.trim();
-      const day = parseInt(parsed.day);
-      const month = parsed.month;
-      
-      const exists = await birthdayExists(phone, name, day, month);
-      if (exists) {
-        const reply = await safeRewrite(
-          `I already have ${name}'s birthday saved on ${month} ${day}.`
-        );
+      // Prefer deterministic parser; fall back to LLM fields if needed
+      const parsedDate = parseNameAndDate(message);
+      let name;
+      let day;
+      let month;
+
+      if (parsedDate) {
+        name = parsedDate.name.trim();
+        day = parsedDate.day;
+        month = parsedDate.month;
+      } else {
+        name = (parsed.name || '').trim();
+        day = parseInt(parsed.day, 10);
+        month = parsed.month;
+      }
+
+      if (!name || !day || !month) {
+        // If we still don't have a valid triplet, fall through to regex logic
+      } else {
+        const exists = await birthdayExists(phone, name, day, month);
+        if (exists) {
+          const reply = await safeRewrite(
+            `I already have ${name}'s birthday saved on ${month} ${day}.`
+          );
+          await sendWhatsAppMessage(phone, reply);
+          return res.sendStatus(200);
+        }
+
+        await saveBirthday(phone, name, day, month);
+        const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${day}. 🎂`);
         await sendWhatsAppMessage(phone, reply);
         return res.sendStatus(200);
       }
-
-      await saveBirthday(phone, name, day, month);
-      const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${day}. 🎂`);
-      await sendWhatsAppMessage(phone, reply);
-      return res.sendStatus(200);
     }
 
     if (parsed.intent === 'delete') {
@@ -299,7 +569,7 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 4️⃣ Update
+    // 4️⃣ Update (date)
     const updateMatch = lowerMessage.match(
       /^(?:change|update)\s+(.+?)\s+(?:to|birthday to)\s+([a-z]+)\s+(\d+)$/i
     );
@@ -311,11 +581,29 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // 5️⃣ Save
-    const saveMatch = message.match(/^(.+?)\s+([A-Za-z]+)\s+(\d+)$/);
-    if (saveMatch) {
-      const [, name, month, day] = saveMatch;
-      const exists = await birthdayExists(phone, name.trim(), parseInt(day), month);
+    // 4️⃣ Rename (name only)
+    const renameMatch = lowerMessage.match(
+      /^(?:rename|change name|update name|edit name)\s+(.+?)\s+to\s+(.+)$/i
+    );
+    if (renameMatch) {
+      const [, oldName, newName] = renameMatch;
+      const updated = await updateBirthdayName(phone, oldName.trim(), newName.trim());
+      
+      if (updated) {
+        const reply = await safeRewrite(`I've renamed ${oldName.trim()} to ${newName.trim()}.`);
+        await sendWhatsAppMessage(phone, reply);
+      } else {
+        const reply = await safeRewrite(`I couldn't find ${oldName.trim()}'s birthday.`);
+        await sendWhatsAppMessage(phone, reply);
+      }
+      return res.sendStatus(200);
+    }
+
+    // 5️⃣ Save (with flexible date parsing)
+    const parsedSave = parseNameAndDate(message);
+    if (parsedSave) {
+      const { name, day, month } = parsedSave;
+      const exists = await birthdayExists(phone, name.trim(), day, month);
 
       if (exists) {
         const reply = await safeRewrite(
@@ -325,8 +613,29 @@ app.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
       }
 
-      await saveBirthday(phone, name.trim(), parseInt(day), month);
+      await saveBirthday(phone, name.trim(), day, month);
       const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${day}. 🎂`);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    // Legacy save pattern fallback ("Name Month Day")
+    const saveMatch = message.match(/^(.+?)\s+([A-Za-z]+)\s+(\d+)$/);
+    if (saveMatch) {
+      const [, name, month, day] = saveMatch;
+      const d = parseInt(day, 10);
+      const exists = await birthdayExists(phone, name.trim(), d, month);
+
+      if (exists) {
+        const reply = await safeRewrite(
+          `I already have ${name}'s birthday saved on ${month} ${d}.`
+        );
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
+
+      await saveBirthday(phone, name.trim(), d, month);
+      const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${d}. 🎂`);
       await sendWhatsAppMessage(phone, reply);
       return res.sendStatus(200);
     }

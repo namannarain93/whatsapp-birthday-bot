@@ -100,11 +100,40 @@ async function updateBirthday(phone, name, day, month) {
   );
 }
 
+// Update birthday name (rename)
+async function updateBirthdayName(phone, oldName, newName) {
+  const res = await pool.query(
+    `
+    UPDATE birthdays
+    SET name = $3
+    WHERE phone = $1 AND LOWER(name) = LOWER($2)
+    `,
+    [phone, oldName, newName]
+  );
+  return res.rowCount > 0;
+}
+
+// Check if this is the first time a phone number is using the bot
+async function isFirstTimeUser(phone) {
+  const res = await pool.query(
+    `
+    SELECT 1 FROM birthdays
+    WHERE phone = $1
+    LIMIT 1
+    `,
+    [phone]
+  );
+  // First time user if no rows exist for this phone
+  return res.rowCount === 0;
+}
+
 module.exports = {
   saveBirthday,
   birthdayExists,
   getBirthdaysForMonth,
   getAllBirthdays,
   deleteBirthday,
-  updateBirthday
+  updateBirthday,
+  updateBirthdayName,
+  isFirstTimeUser
 };

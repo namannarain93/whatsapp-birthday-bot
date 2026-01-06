@@ -88,15 +88,38 @@ async function getAllBirthdays(phone) {
 }
 
 // Delete birthday
+// Supports both exact match and fuzzy/partial match for corrupted names
 async function deleteBirthday(phone, name) {
-  const res = await pool.query(
+  // First try exact match (case-insensitive)
+  const exactRes = await pool.query(
     `
     DELETE FROM birthdays
     WHERE phone = $1 AND LOWER(name) = LOWER($2)
     `,
     [phone, name]
   );
-  return res.rowCount > 0;
+  
+  if (exactRes.rowCount > 0) {
+    console.log(`[DELETE] Exact match deleted ${exactRes.rowCount} row(s) for phone=${phone}, name="${name}"`);
+    return true;
+  }
+  
+  // If exact match failed, try fuzzy/partial match
+  const fuzzyRes = await pool.query(
+    `
+    DELETE FROM birthdays
+    WHERE phone = $1 AND LOWER(name) LIKE LOWER('%' || $2 || '%')
+    `,
+    [phone, name]
+  );
+  
+  if (fuzzyRes.rowCount > 0) {
+    console.log(`[DELETE] Fuzzy match deleted ${fuzzyRes.rowCount} row(s) for phone=${phone}, name="${name}"`);
+    return true;
+  }
+  
+  console.log(`[DELETE] No match found for phone=${phone}, name="${name}"`);
+  return false;
 }
 
 // Verify birthday exists (for post-delete verification)

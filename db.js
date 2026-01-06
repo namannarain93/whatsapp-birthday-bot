@@ -8,12 +8,13 @@ const pool = new Pool({
 // Create tables on startup
 (async () => {
   try {
-    // Create users table for tracking welcome state and timezone
+    // Create users table for tracking welcome state, timezone, and last interaction
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         phone TEXT PRIMARY KEY,
         has_seen_welcome BOOLEAN NOT NULL DEFAULT false,
         timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+        last_interaction_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -22,6 +23,12 @@ const pool = new Pool({
     await pool.query(`
       ALTER TABLE users 
       ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata';
+    `);
+    
+    // Add last_interaction_at column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS last_interaction_at TIMESTAMP;
     `);
 
     // Create birthdays table
@@ -94,16 +101,28 @@ async function getAllBirthdays(phone) {
   return res.rows;
 }
 
-// Get all users with their timezones
+// Get all users with their timezones and last interaction timestamps
 async function getAllUsers() {
   const res = await pool.query(
     `
-    SELECT phone, timezone
+    SELECT phone, timezone, last_interaction_at
     FROM users
     WHERE timezone IS NOT NULL
     `
   );
   return res.rows;
+}
+
+// Update last interaction timestamp for a user
+async function updateLastInteraction(phone) {
+  await pool.query(
+    `
+    UPDATE users
+    SET last_interaction_at = CURRENT_TIMESTAMP
+    WHERE phone = $1
+    `,
+    [phone]
+  );
 }
 
 // Get birthdays for a specific day and month (for reminders)
@@ -265,5 +284,6 @@ module.exports = {
   markWelcomeSeen,
   userExists,
   onboardUser,
-  getAllUsers
+  getAllUsers,
+  updateLastInteraction
 };

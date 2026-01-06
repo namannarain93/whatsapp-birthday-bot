@@ -17,7 +17,8 @@ const {
   hasSeenWelcome,
   markWelcomeSeen,
   userExists,
-  onboardUser
+  onboardUser,
+  updateLastInteraction
 } = require('./db.js');
 
 app.use((req, res, next) => {
@@ -350,6 +351,9 @@ app.post('/webhook', async (req, res) => {
 
     console.log('📞 FROM:', phone);
     console.log('💬 MESSAGE:', message);
+
+    // Update last interaction timestamp for Meta 24h window compliance
+    await updateLastInteraction(phone);
 
     // 0️⃣ FIRST-TIME USER ONBOARDING (check at the very beginning, before any intent parsing)
     // This ensures welcome is sent ONLY once, the first time a phone number ever messages the bot

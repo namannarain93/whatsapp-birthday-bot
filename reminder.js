@@ -9,7 +9,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Send WhatsApp message (reused from server.js logic)
+// Send WhatsApp text message (reused from server.js logic)
 async function sendWhatsAppMessage(to, body) {
   const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
 
@@ -38,11 +38,53 @@ async function sendWhatsAppMessage(to, body) {
   }
 }
 
-// Get all users with their timezones
+// Send WhatsApp template message (required for users outside 24h window)
+// Meta requires templates when messaging users who haven't interacted in 24+ hours
+async function sendTemplateMessage(to, templateName, parametersArray) {
+  const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'template',
+        template: {
+          name: templateName,
+          language: { code: 'en_US' },
+          components: [
+            {
+              type: 'body',
+              parameters: parametersArray.map(text => ({
+                type: 'text',
+                text: text
+              }))
+            }
+          ]
+        }
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(data.error.message || 'WhatsApp API error');
+    }
+    return data;
+  } catch (err) {
+    throw err;
+  }
+}
+
+// Get all users with their timezones and last interaction timestamps
 async function getAllUsers() {
   const res = await pool.query(
     `
-    SELECT phone, timezone
+    SELECT phone, timezone, last_interaction_at
     FROM users
     WHERE timezone IS NOT NULL
     `
@@ -78,7 +120,7 @@ async function sendBirthdayReminders() {
 
     for (const user of users) {
       try {
-        const { phone, timezone } = user;
+        const { phone, timezone, last_interaction_at } = user;
         
         // Get current time in user's timezone
         const now = moment().tz(timezone);
@@ -108,18 +150,42 @@ async function sendBirthdayReminders() {
           continue;
         }
         
-        // Format message based on number of birthdays
-        let message;
-        if (birthdays.length === 1) {
-          message = `🎉 Today is ${birthdays[0].name}'s birthday! Don't forget to wish them 😊`;
+        // Check if user is within 24-hour window (Meta compliance)
+        // If last_interaction_at is null or > 24 hours ago, must use template
+        let useTemplate = false;
+        if (last_interaction_at) {
+          const lastInteraction = moment(last_interaction_at).tz(timezone);
+          const hoursSinceInteraction = now.diff(lastInteraction, 'hours');
+          // If more than 24 hours since last interaction, use template
+          useTemplate = hoursSinceInteraction > 24;
         } else {
-          const names = birthdays.map(b => b.name).join(', ');
-          message = `🎉 Today are birthdays of: ${names}! Don't forget to wish them 😊`;
+          // No previous interaction, must use template
+          useTemplate = true;
         }
         
-        // Send WhatsApp message
-        await sendWhatsAppMessage(phone, message);
-        console.log(`[REMINDER] ✅ Sent reminder to ${phone} for ${birthdays.length} birthday(s)`);
+        // Prepare names for message
+        const names = birthdays.map(b => b.name);
+        const namesString = names.join(', ');
+        
+        if (useTemplate) {
+          // Outside 24h window: Send template message (Meta requirement)
+          // Template name: "birthday_reminder" (must be created in Meta dashboard)
+          // Template body: "🎉 Today is {{1}}'s birthday! Don't forget to wish them 😊"
+          // For multiple birthdays: pass comma-separated names (e.g., "Papa, Anik, Dada") into {{1}}
+          await sendTemplateMessage(phone, 'birthday_reminder', [namesString]);
+          console.log(`[REMINDER] ✅ Sent TEMPLATE reminder to ${phone} for ${birthdays.length} birthday(s) (outside 24h window)`);
+        } else {
+          // Within 24h window: Send normal text message
+          let message;
+          if (birthdays.length === 1) {
+            message = `🎉 Today is ${names[0]}'s birthday! Don't forget to wish them 😊`;
+          } else {
+            message = `🎉 Today are birthdays of: ${namesString}! Don't forget to wish them 😊`;
+          }
+          await sendWhatsAppMessage(phone, message);
+          console.log(`[REMINDER] ✅ Sent TEXT reminder to ${phone} for ${birthdays.length} birthday(s) (within 24h window)`);
+        }
+        
         remindedCount++;
         
       } catch (err) {

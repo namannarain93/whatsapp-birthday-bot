@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express'); 
-const { rewriteForElderlyUser } = require('./llm.js');
+const { rewriteForElderlyUser, parseIntentWithLLM } = require('./llm.js');
 const fetch = (...args) =>
   import('node-fetch').then(({ default: fetch }) => fetch(...args));
 const app = express();
@@ -85,7 +85,148 @@ app.post('/webhook', async (req, res) => {
     console.log('📞 FROM:', phone);
     console.log('💬 MESSAGE:', message);
 
-    // 1️⃣ All birthdays
+    // LLM Intent Parsing (before regex fallback)
+    const parsed = await parseIntentWithLLM(message);
+
+    // Handle LLM-parsed intents
+    if (parsed.intent === 'save') {
+      const name = parsed.name.trim();
+      const day = parseInt(parsed.day);
+      const month = parsed.month;
+      
+      const exists = await birthdayExists(phone, name, day, month);
+      if (exists) {
+        const reply = await safeRewrite(
+          `I already have ${name}'s birthday saved on ${month} ${day}.`
+        );
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
+
+      await saveBirthday(phone, name, day, month);
+      const reply = await safeRewrite(`I've saved ${name}'s birthday on ${month} ${day}. 🎂`);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    if (parsed.intent === 'delete') {
+      const name = parsed.name.trim();
+      await deleteBirthday(phone, name);
+      const reply = await safeRewrite(`I've removed ${name}'s birthday.`);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    if (parsed.intent === 'update') {
+      const name = parsed.name.trim();
+      const day = parseInt(parsed.day);
+      const month = parsed.month;
+      await updateBirthday(phone, name, day, month);
+      const reply = await safeRewrite(`I've updated ${name}'s birthday to ${month} ${day}.`);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    if (parsed.intent === 'list_all') {
+      const birthdays = await getAllBirthdays(phone);
+
+      if (birthdays.length === 0) {
+        const reply = await safeRewrite('I have not saved any birthdays yet.');
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
+
+      // Month order map
+      const monthOrder = {
+        Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+        Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
+      };
+
+      // Short month to full month name mapping
+      const monthNames = {
+        Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April',
+        May: 'May', Jun: 'June', Jul: 'July', Aug: 'August',
+        Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December'
+      };
+
+      // Reverse mapping: full name to short
+      const fullToShort = {};
+      Object.keys(monthNames).forEach(short => {
+        fullToShort[monthNames[short]] = short;
+      });
+
+      // Normalize month to short form for sorting
+      const getMonthOrder = (month) => {
+        if (monthOrder[month]) return monthOrder[month];
+        const short = fullToShort[month];
+        return monthOrder[short] || 99;
+      };
+
+      // Get full month name for display
+      const getFullMonth = (month) => {
+        if (monthNames[month]) return monthNames[month];
+        if (fullToShort[month]) return month; // already full name
+        return month; // fallback
+      };
+
+      // Sort chronologically by month order then day
+      const sorted = birthdays.sort((a, b) => {
+        const monthA = getMonthOrder(a.month);
+        const monthB = getMonthOrder(b.month);
+        if (monthA !== monthB) return monthA - monthB;
+        return a.day - b.day;
+      });
+
+      // Group by full month name
+      const grouped = {};
+      sorted.forEach(b => {
+        const fullMonth = getFullMonth(b.month);
+        if (!grouped[fullMonth]) {
+          grouped[fullMonth] = [];
+        }
+        grouped[fullMonth].push(b);
+      });
+
+      // Build reply string
+      let reply = '🎂 BIRTHDAYS 🎂\n\n';
+      const orderedMonths = Object.keys(grouped).sort((a, b) => {
+        const shortA = fullToShort[a] || a;
+        const shortB = fullToShort[b] || b;
+        return (monthOrder[shortA] || 99) - (monthOrder[shortB] || 99);
+      });
+
+      orderedMonths.forEach(month => {
+        reply += `${month}\n`;
+        grouped[month].forEach(b => {
+          reply += `• ${b.day} – ${b.name}\n`;
+        });
+        reply += '\n';
+      });
+
+      reply = await safeRewrite(reply.trim());
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    if (parsed.intent === 'list_month') {
+      const month = getCurrentMonthAbbrev();
+      const monthName = getCurrentMonthName();
+      const birthdays = await getBirthdaysForMonth(phone, month);
+
+      let reply =
+        birthdays.length === 0
+          ? `I don't have any birthdays saved for ${monthName}.`
+          : `Here are the birthdays in ${monthName}:\n\n` +
+            birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
+
+      reply = await safeRewrite(reply);
+      await sendWhatsAppMessage(phone, reply);
+      return res.sendStatus(200);
+    }
+
+    // If intent is "unknown", fall through to existing regex logic below
+
+    // 1️⃣ All birthdays (regex fallback)
     if (
       lowerMessage.includes('all birthdays') ||
       lowerMessage.includes('complete list') ||
@@ -93,13 +234,80 @@ app.post('/webhook', async (req, res) => {
     ) {
       const birthdays = await getAllBirthdays(phone);
 
-      let reply =
-        birthdays.length === 0
-          ? 'I have not saved any birthdays yet.'
-          : 'Here is the complete list of birthdays:\n\n' +
-            birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
+      if (birthdays.length === 0) {
+        const reply = await safeRewrite('I have not saved any birthdays yet.');
+        await sendWhatsAppMessage(phone, reply);
+        return res.sendStatus(200);
+      }
 
-      reply = await safeRewrite(reply);
+      // Month order map
+      const monthOrder = {
+        Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+        Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
+      };
+
+      // Short month to full month name mapping
+      const monthNames = {
+        Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April',
+        May: 'May', Jun: 'June', Jul: 'July', Aug: 'August',
+        Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December'
+      };
+
+      // Reverse mapping: full name to short
+      const fullToShort = {};
+      Object.keys(monthNames).forEach(short => {
+        fullToShort[monthNames[short]] = short;
+      });
+
+      // Normalize month to short form for sorting
+      const getMonthOrder = (month) => {
+        if (monthOrder[month]) return monthOrder[month];
+        const short = fullToShort[month];
+        return monthOrder[short] || 99;
+      };
+
+      // Get full month name for display
+      const getFullMonth = (month) => {
+        if (monthNames[month]) return monthNames[month];
+        if (fullToShort[month]) return month; // already full name
+        return month; // fallback
+      };
+
+      // Sort chronologically by month order then day
+      const sorted = birthdays.sort((a, b) => {
+        const monthA = getMonthOrder(a.month);
+        const monthB = getMonthOrder(b.month);
+        if (monthA !== monthB) return monthA - monthB;
+        return a.day - b.day;
+      });
+
+      // Group by full month name
+      const grouped = {};
+      sorted.forEach(b => {
+        const fullMonth = getFullMonth(b.month);
+        if (!grouped[fullMonth]) {
+          grouped[fullMonth] = [];
+        }
+        grouped[fullMonth].push(b);
+      });
+
+      // Build reply string
+      let reply = '🎂 BIRTHDAYS 🎂\n\n';
+      const orderedMonths = Object.keys(grouped).sort((a, b) => {
+        const shortA = fullToShort[a] || a;
+        const shortB = fullToShort[b] || b;
+        return (monthOrder[shortA] || 99) - (monthOrder[shortB] || 99);
+      });
+
+      orderedMonths.forEach(month => {
+        reply += `${month}\n`;
+        grouped[month].forEach(b => {
+          reply += `• ${b.day} – ${b.name}\n`;
+        });
+        reply += '\n';
+      });
+
+      reply = await safeRewrite(reply.trim());
       await sendWhatsAppMessage(phone, reply);
       return res.sendStatus(200);
     }

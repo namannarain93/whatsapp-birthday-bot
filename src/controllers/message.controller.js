@@ -345,7 +345,8 @@ async function handleIncomingMessage(req, res) {
     // 7️⃣ Final Fallback
     // All existing users (who reach here) get the standard fallback message
     const help = await safeRewrite(
-      'You can tell me a birthday like this: Tanni Feb 9 🎂\nNot sure what to do? Just type help.'
+      'I don\'t think I understand that. \n\n' +
+      'Not sure what to do? Just type *help*.'
     );
     await sendWhatsAppMessage(phone, help);
     return res.sendStatus(200);

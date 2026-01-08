@@ -130,9 +130,9 @@ async function listBirthdaysForUser(phone, formatBirthdaysChronologically) {
     return;
   }
 
+  // Skip LLM rewrite for formatted lists - they're already properly formatted
   const formatted = formatBirthdaysChronologically(birthdays);
-  const reply = await safeRewrite(formatted);
-  await sendWhatsAppMessage(phone, reply);
+  await sendWhatsAppMessage(phone, formatted);
 }
 
 // List birthdays for a specific month

@@ -23,8 +23,8 @@ async function handleOnboarding(phone) {
   if (!exists) {
     // New user: onboard them and send welcome message
     await onboardUser(phone);
-    const reply = await safeRewrite(WELCOME_MESSAGE);
-    await sendWhatsAppMessage(phone, reply);
+    // Skip LLM rewrite for welcome message - it's already properly formatted
+    await sendWhatsAppMessage(phone, WELCOME_MESSAGE);
     return true; // User was onboarded
   }
   return false; // Existing user
@@ -32,8 +32,8 @@ async function handleOnboarding(phone) {
 
 // Send help/welcome message
 async function sendHelpMessage(phone) {
-  const reply = await safeRewrite(WELCOME_MESSAGE);
-  await sendWhatsAppMessage(phone, reply);
+  // Skip LLM rewrite for welcome message - it's already properly formatted
+  await sendWhatsAppMessage(phone, WELCOME_MESSAGE);
 }
 
 module.exports = {

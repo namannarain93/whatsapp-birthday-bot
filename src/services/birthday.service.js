@@ -17,6 +17,7 @@ const { normalizeMonthToShort } = require('../utils/month.utils');
 const { parseNameAndDate } = require('../parsers/date.parser');
 const { extractNamesFromDeleteInput } = require('../parsers/date.parser');
 const { safeRewrite, sendWhatsAppMessage } = require('./whatsapp.service');
+const { findFuzzyMatches } = require('../utils/fuzzyMatch');
 
 // Save a birthday for a user
 async function saveBirthdayForUser(phone, name, day, month) {
@@ -215,6 +216,37 @@ async function listUpcomingBirthdaysForUser(phone) {
   }
 }
 
+// Fuzzy search birthdays by name
+async function fuzzySearchBirthdayByName(phone, query) {
+  // Get all birthdays for this user
+  const allBirthdays = await getAllBirthdays(phone);
+  
+  if (allBirthdays.length === 0) {
+    return { found: false };
+  }
+
+  // Find fuzzy matches
+  const matches = findFuzzyMatches(query, allBirthdays, 0.6);
+
+  if (matches.length === 0) {
+    return { found: false };
+  }
+
+  if (matches.length === 1) {
+    // Single match - return formatted response
+    const b = matches[0];
+    const reply = await safeRewrite(`${b.name}'s birthday is on ${b.month} ${b.day}. 🎂`);
+    await sendWhatsAppMessage(phone, reply);
+    return { found: true, count: 1 };
+  } else {
+    // Multiple matches - return list
+    const list = matches.map(b => `• ${b.name} – ${b.month} ${b.day}`).join('\n');
+    const reply = await safeRewrite(`I found these matches:\n\n${list}`);
+    await sendWhatsAppMessage(phone, reply);
+    return { found: true, count: matches.length };
+  }
+}
+
 module.exports = {
   saveBirthdayForUser,
   saveBirthdayFromMessage,
@@ -225,6 +257,7 @@ module.exports = {
   listBirthdaysForMonth,
   searchBirthdayByName,
   searchBirthdaysByDate,
-  listUpcomingBirthdaysForUser
+  listUpcomingBirthdaysForUser,
+  fuzzySearchBirthdayByName
 };
 

@@ -4,15 +4,16 @@ const { userExists, onboardUser } = require('../../db.js');
 const { safeRewrite, sendWhatsAppMessage } = require('./whatsapp.service');
 
 const WELCOME_MESSAGE =
-  "Hi! 👋 Welcome to the Birthday Bot 🎂\n" +
-  "This is the easiest way to save birthdays so you never forget 😊\n\n" +
-  "To save a birthday, just type:\n" +
-  "Name, Date\n\n" +
-  "Example:\n" +
-  "Papa, 29 Aug\n" +
-  "Tanni, 9 Feb\n\n" +
+  "Hi! 👋 Welcome to the *Birthday Bot* 🎂\n\n" +
+  "This is an early version of a WhatsApp bot that helps you save birthdays, so please be kind and patient. 😊\n\n" +
+  "To save a birthday, just type (example):\n" +
+  " → *Papa, 29 Aug*\n" +
+  " → *Mom, 9 Feb*\n\n" +
+  "To search ordelete a birthday, just type:\n" +
+  " → *search Papa*\n" +
+  " → *delete Mom*\n\n" +
   "To see all birthdays, type:\n" +
-  "Complete list\n\n" +
+  " → *Complete list*\n\n" +
   "That's it 👍\n" +
   "Just send messages like normal WhatsApp. No buttons, no forms.";
 

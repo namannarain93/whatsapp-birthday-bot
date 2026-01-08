@@ -16,7 +16,8 @@ const {
   listBirthdaysForMonth,
   searchBirthdayByName,
   searchBirthdaysByDate,
-  listUpcomingBirthdaysForUser
+  listUpcomingBirthdaysForUser,
+  fuzzySearchBirthdayByName
 } = require('../services/birthday.service');
 const { formatBirthdaysChronologically } = require('../formatters/birthday.formatter');
 const {
@@ -323,7 +324,25 @@ async function handleIncomingMessage(req, res) {
       return res.sendStatus(200);
     }
 
-    // 6️⃣ Fallback
+    // 6️⃣ Fuzzy name search (fallback before help message)
+    // If no intent matched, try fuzzy name search
+    // Only attempt if message is not empty and doesn't look like a command
+    const trimmedMessage = message.trim();
+    if (trimmedMessage.length > 0 && trimmedMessage.length <= 50) {
+      // Skip if it looks like a date pattern or command
+      const looksLikeDate = /\d{1,2}[\/-]\d{1,2}|\d{1,2}(st|nd|rd|th)/i.test(trimmedMessage);
+      const looksLikeCommand = /^(save|delete|remove|change|update|list|show|help|complete)/i.test(trimmedMessage);
+      
+      if (!looksLikeDate && !looksLikeCommand) {
+        const fuzzyResult = await fuzzySearchBirthdayByName(phone, trimmedMessage);
+        if (fuzzyResult.found) {
+          return res.sendStatus(200);
+        }
+        // If no fuzzy match found, fall through to help message
+      }
+    }
+
+    // 7️⃣ Final Fallback
     // All existing users (who reach here) get the standard fallback message
     const help = await safeRewrite(
       'You can tell me a birthday like this: Tanni Feb 9 🎂\nNot sure what to do? Just type help.'

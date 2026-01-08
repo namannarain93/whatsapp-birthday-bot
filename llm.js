@@ -36,6 +36,8 @@ STRICT RULES:
 - Short sentences
 - At most one emoji
 - Keep it friendly and reassuring
+- PRESERVE all existing WhatsApp formatting (asterisks for bold, etc.)
+- Do NOT add or remove asterisks (*) - keep formatting exactly as provided
 
 You MUST only rewrite what is given.
           `.trim(),

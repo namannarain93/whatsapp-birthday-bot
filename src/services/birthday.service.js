@@ -130,9 +130,11 @@ async function listBirthdaysForUser(phone, formatBirthdaysChronologically) {
     return;
   }
 
-  // Skip LLM rewrite for formatted lists - they're already properly formatted
+  // Format with bold month names, then pass through LLM rewrite
+  // LLM will preserve existing bold formatting and make the message warm
   const formatted = formatBirthdaysChronologically(birthdays);
-  await sendWhatsAppMessage(phone, formatted);
+  const reply = await safeRewrite(formatted);
+  await sendWhatsAppMessage(phone, reply);
 }
 
 // List birthdays for a specific month

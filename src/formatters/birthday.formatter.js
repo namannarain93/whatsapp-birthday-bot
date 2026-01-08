@@ -45,7 +45,8 @@ function formatBirthdaysChronologically(birthdays) {
   orderedMonths.forEach(monthKey => {
     const label = toDisplayMonthName(monthKey);
     if (!label) return;
-    result += `${label}\n`;
+    // Add bold formatting to month name
+    result += `*${label}*\n`;
     grouped[monthKey].forEach(b => {
       result += `• ${b.day} – ${b.name}\n`;
     });

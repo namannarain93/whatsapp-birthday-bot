@@ -5,7 +5,7 @@ const { safeRewrite, sendWhatsAppMessage } = require('./whatsapp.service');
 
 const WELCOME_MESSAGE =
   "Hi! 👋 Welcome to the *Birthday Bot* 🎂\n\n" +
-  "This is an early version of a WhatsApp bot that helps you save birthdays, so please be kind and patient. 😊\n\n" +
+  "This is a new bot and still being tested. Responses may be slow and some things may not work as expected. 😊\n\n" +
   "To save a birthday, just type (example):\n" +
   " → *Papa, 29 Aug*\n" +
   " → *Mom, 9 Feb*\n\n" +

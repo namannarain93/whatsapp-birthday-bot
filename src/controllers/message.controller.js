@@ -27,6 +27,7 @@ const {
   normalizeMonthToShort
 } = require('../utils/month.utils');
 const { parseNameAndDate } = require('../parsers/date.parser');
+const { isSearchIntent, extractSearchQuery } = require('../utils/searchIntent');
 
 async function handleIncomingMessage(req, res) {
   try {
@@ -324,21 +325,25 @@ async function handleIncomingMessage(req, res) {
       return res.sendStatus(200);
     }
 
-    // 6️⃣ Fuzzy name search (fallback before help message)
-    // If no intent matched, try fuzzy name search
-    // Only attempt if message is not empty and doesn't look like a command
-    const trimmedMessage = message.trim();
-    if (trimmedMessage.length > 0 && trimmedMessage.length <= 50) {
-      // Skip if it looks like a date pattern or command
-      const looksLikeDate = /\d{1,2}[\/-]\d{1,2}|\d{1,2}(st|nd|rd|th)/i.test(trimmedMessage);
-      const looksLikeCommand = /^(save|delete|remove|change|update|list|show|help|complete)/i.test(trimmedMessage);
+    // 6️⃣ Fuzzy name search (ONLY if explicit search intent detected)
+    // Only trigger if user explicitly uses search-related verbs
+    if (isSearchIntent(message)) {
+      console.log('🔍 Fuzzy search triggered for:', message);
       
-      if (!looksLikeDate && !looksLikeCommand) {
-        const fuzzyResult = await fuzzySearchBirthdayByName(phone, trimmedMessage);
-        if (fuzzyResult.found) {
-          return res.sendStatus(200);
+      // Extract the name/query from the search message
+      const searchQuery = extractSearchQuery(message).trim();
+      
+      // Skip if query is empty or looks like a date pattern
+      if (searchQuery.length > 0 && searchQuery.length <= 50) {
+        const looksLikeDate = /\d{1,2}[\/-]\d{1,2}|\d{1,2}(st|nd|rd|th)/i.test(searchQuery);
+        
+        if (!looksLikeDate) {
+          const fuzzyResult = await fuzzySearchBirthdayByName(phone, searchQuery);
+          if (fuzzyResult.found) {
+            return res.sendStatus(200);
+          }
+          // If no fuzzy match found, fall through to help message
         }
-        // If no fuzzy match found, fall through to help message
       }
     }
 

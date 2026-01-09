@@ -28,6 +28,7 @@ const {
 } = require('../utils/month.utils');
 const { parseNameAndDate } = require('../parsers/date.parser');
 const { isSearchIntent, extractSearchQuery } = require('../utils/searchIntent');
+const { logEvent } = require('../utils/betterstack');
 
 async function handleIncomingMessage(req, res) {
   try {
@@ -41,6 +42,18 @@ async function handleIncomingMessage(req, res) {
     const phone = messageObj.from;
     const message = messageObj.text?.body || '';
     const lowerMessage = message.toLowerCase();
+
+    // Extract userId and text for Better Stack logging
+    const userId = phone || 'unknown';
+    const text = message || '';
+
+    // Log user message to Better Stack
+    await logEvent({
+      event: 'user_message_received',
+      userId,
+      ts: new Date().toISOString(),
+      props: { text }
+    });
 
     console.log('📞 FROM:', phone);
     console.log('💬 MESSAGE:', message);

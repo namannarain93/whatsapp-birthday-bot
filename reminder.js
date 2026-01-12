@@ -1,7 +1,8 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const moment = require('moment-timezone');
-const fetch = require('node-fetch');
+const fetch = (...args) =>
+  import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // Connect to Postgres
 const pool = new Pool({
@@ -56,7 +57,7 @@ async function sendTemplateMessage(to, templateName, parametersArray) {
         type: 'template',
         template: {
           name: templateName,
-          language: { code: 'en_US' },
+          language: { code: 'en' },
           components: [
             {
               type: 'body',
@@ -106,6 +107,31 @@ async function getBirthdaysForDate(phone, day, month) {
   return res.rows;
 }
 
+// Check if reminder was already sent today for a user
+async function hasReminderBeenSentToday(phone, date, type = 'daily_today') {
+  const res = await pool.query(
+    `
+    SELECT 1 FROM birthday_reminder_log
+    WHERE phone = $1 AND date = $2 AND type = $3
+    LIMIT 1
+    `,
+    [phone, date, type]
+  );
+  return res.rowCount > 0;
+}
+
+// Log that a reminder was sent (idempotent - uses ON CONFLICT)
+async function logReminderSent(phone, date, type = 'daily_today') {
+  await pool.query(
+    `
+    INSERT INTO birthday_reminder_log (phone, date, type)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (phone, date, type) DO NOTHING
+    `,
+    [phone, date, type]
+  );
+}
+
 // Main reminder function
 async function sendBirthdayReminders() {
   try {
@@ -117,23 +143,26 @@ async function sendBirthdayReminders() {
 
     let remindedCount = 0;
     let errorCount = 0;
+    let skippedCount = 0;
 
     for (const user of users) {
       try {
-        const { phone, timezone, last_interaction_at } = user;
+        const { phone, timezone } = user;
+        const userTimezone = timezone || 'Asia/Kolkata'; // Default timezone
         
         // Get current time in user's timezone
-        const now = moment().tz(timezone);
+        const now = moment().tz(userTimezone);
         const currentHour = now.hour();
         const currentMinute = now.minute();
         
         // Only send reminders at 9:00 AM (user's local time)
-        // Allow a small window (9:00-9:05) to account for cron timing variations
+        // Allow a small window (9:00-9:05) to account for scheduler timing variations
         if (currentHour !== 9 || currentMinute > 5) {
           continue;
         }
         
-        // Get today's date in user's timezone
+        // Get today's date in user's timezone (YYYY-MM-DD format)
+        const todayDate = now.format('YYYY-MM-DD');
         const todayDay = now.date();
         const todayMonthNum = now.month() + 1; // moment months are 0-indexed
         
@@ -141,6 +170,14 @@ async function sendBirthdayReminders() {
         const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const todayMonth = monthNames[todayMonthNum - 1];
+        
+        // Check if reminder was already sent today (idempotent check)
+        const alreadySent = await hasReminderBeenSentToday(phone, todayDate, 'daily_today');
+        if (alreadySent) {
+          console.log(`[REMINDER] ⏭️  Skipping ${phone} - reminder already sent today`);
+          skippedCount++;
+          continue;
+        }
         
         // Get birthdays for today
         const birthdays = await getBirthdaysForDate(phone, todayDay, todayMonth);
@@ -150,42 +187,19 @@ async function sendBirthdayReminders() {
           continue;
         }
         
-        // Check if user is within 24-hour window (Meta compliance)
-        // If last_interaction_at is null or > 24 hours ago, must use template
-        let useTemplate = false;
-        if (last_interaction_at) {
-          const lastInteraction = moment(last_interaction_at).tz(timezone);
-          const hoursSinceInteraction = now.diff(lastInteraction, 'hours');
-          // If more than 24 hours since last interaction, use template
-          useTemplate = hoursSinceInteraction > 24;
-        } else {
-          // No previous interaction, must use template
-          useTemplate = true;
-        }
-        
         // Prepare names for message
         const names = birthdays.map(b => b.name);
         const namesString = names.join(', ');
         
-        if (useTemplate) {
-          // Outside 24h window: Send template message (Meta requirement)
-          // Template name: "birthday_reminder" (must be created in Meta dashboard)
-          // Template body: "🎉 Today is {{1}}'s birthday! Don't forget to wish them 😊"
-          // For multiple birthdays: pass comma-separated names (e.g., "Papa, Anik, Dada") into {{1}}
-          await sendTemplateMessage(phone, 'birthday_reminder', [namesString]);
-          console.log(`[REMINDER] ✅ Sent TEMPLATE reminder to ${phone} for ${birthdays.length} birthday(s) (outside 24h window)`);
-        } else {
-          // Within 24h window: Send normal text message
-          let message;
-          if (birthdays.length === 1) {
-            message = `🎉 Today is ${names[0]}'s birthday! Don't forget to wish them 😊`;
-          } else {
-            message = `🎉 Today are birthdays of: ${namesString}! Don't forget to wish them 😊`;
-          }
-          await sendWhatsAppMessage(phone, message);
-          console.log(`[REMINDER] ✅ Sent TEXT reminder to ${phone} for ${birthdays.length} birthday(s) (within 24h window)`);
-        }
+        // Always use template message (as per requirements)
+        // Template name: "birthday_reminder" (must be created in Meta dashboard)
+        // Template body should accept {{1}} parameter with names
+        await sendTemplateMessage(phone, 'birthday_reminder', [namesString]);
         
+        // Log that reminder was sent (idempotent - prevents duplicates)
+        await logReminderSent(phone, todayDate, 'daily_today');
+        
+        console.log(`[REMINDER] ✅ Sent TEMPLATE reminder to ${phone} for ${birthdays.length} birthday(s): ${namesString}`);
         remindedCount++;
         
       } catch (err) {
@@ -195,19 +209,36 @@ async function sendBirthdayReminders() {
       }
     }
     
-    console.log(`[REMINDER] Completed: ${remindedCount} user(s) reminded, ${errorCount} error(s)`);
+    console.log(`[REMINDER] Completed: ${remindedCount} user(s) reminded, ${skippedCount} skipped (already sent), ${errorCount} error(s)`);
     
   } catch (err) {
     console.error('[REMINDER] Fatal error:', err);
-    process.exit(1);
-  } finally {
-    // Close database connection
-    await pool.end();
-    console.log('[REMINDER] Database connection closed');
+    // Don't exit process - let scheduler continue
+    throw err;
   }
 }
 
-// Run if called directly
+// Scheduler function - runs reminder check every 5-10 minutes
+function startReminderScheduler() {
+  console.log('[REMINDER] Starting scheduler - will check every 5 minutes');
+  
+  // Run immediately on startup
+  sendBirthdayReminders().catch(err => {
+    console.error('[REMINDER] Initial run failed:', err);
+  });
+  
+  // Then run every 5 minutes (300000 ms)
+  const intervalMs = 5 * 60 * 1000; // 5 minutes
+  setInterval(() => {
+    sendBirthdayReminders().catch(err => {
+      console.error('[REMINDER] Scheduled run failed:', err);
+    });
+  }, intervalMs);
+  
+  console.log('[REMINDER] Scheduler started successfully');
+}
+
+// Run if called directly (for manual testing)
 if (require.main === module) {
   sendBirthdayReminders()
     .then(() => {
@@ -220,5 +251,5 @@ if (require.main === module) {
     });
 }
 
-module.exports = { sendBirthdayReminders };
+module.exports = { sendBirthdayReminders, startReminderScheduler };
 

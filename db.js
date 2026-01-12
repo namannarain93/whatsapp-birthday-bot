@@ -41,7 +41,26 @@ const pool = new Pool({
         month TEXT NOT NULL,
         UNIQUE (phone, name, day, month)
       );
-    `);    
+    `);
+    
+    // Create birthday_reminder_log table for tracking sent reminders
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS birthday_reminder_log (
+        id SERIAL PRIMARY KEY,
+        phone TEXT NOT NULL,
+        date DATE NOT NULL,
+        type TEXT NOT NULL DEFAULT 'daily_today',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (phone, date, type)
+      );
+    `);
+    
+    // Create index on (phone, date, type) for faster lookups
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_birthday_reminder_log_phone_date_type 
+      ON birthday_reminder_log (phone, date, type);
+    `);
+    
     console.log('Database tables ready (Postgres)');
   } catch (err) {
     console.error('Error creating tables:', err);
@@ -368,6 +387,31 @@ async function isFirstTimeUser(phone) {
   return !seenWelcome;
 }
 
+// Check if reminder was already sent today for a user
+async function hasReminderBeenSentToday(phone, date, type = 'daily_today') {
+  const res = await pool.query(
+    `
+    SELECT 1 FROM birthday_reminder_log
+    WHERE phone = $1 AND date = $2 AND type = $3
+    LIMIT 1
+    `,
+    [phone, date, type]
+  );
+  return res.rowCount > 0;
+}
+
+// Log that a reminder was sent (idempotent - uses ON CONFLICT)
+async function logReminderSent(phone, date, type = 'daily_today') {
+  await pool.query(
+    `
+    INSERT INTO birthday_reminder_log (phone, date, type)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (phone, date, type) DO NOTHING
+    `,
+    [phone, date, type]
+  );
+}
+
 module.exports = {
   saveBirthday,
   birthdayExists,
@@ -387,5 +431,7 @@ module.exports = {
   userExists,
   onboardUser,
   getAllUsers,
-  updateLastInteraction
+  updateLastInteraction,
+  hasReminderBeenSentToday,
+  logReminderSent
 };

@@ -218,17 +218,18 @@ async function sendBirthdayReminders() {
   }
 }
 
-// Scheduler function - runs reminder check every 5-10 minutes
+// Scheduler function - runs reminder check every 30 minutes
 function startReminderScheduler() {
-  console.log('[REMINDER] Starting scheduler - will check every 5 minutes');
+  console.log('[REMINDER] Starting scheduler - will check every 30 minutes');
+  console.log('⏰ Birthday reminder job running (30 min interval)');
   
   // Run immediately on startup
   sendBirthdayReminders().catch(err => {
     console.error('[REMINDER] Initial run failed:', err);
   });
   
-  // Then run every 5 minutes (300000 ms)
-  const intervalMs = 5 * 60 * 1000; // 5 minutes
+  // Then run every 30 minutes (1800000 ms)
+  const intervalMs = 30 * 60 * 1000; // 30 minutes
   setInterval(() => {
     sendBirthdayReminders().catch(err => {
       console.error('[REMINDER] Scheduled run failed:', err);

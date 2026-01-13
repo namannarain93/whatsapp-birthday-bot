@@ -1,22 +1,17 @@
 // Main message controller - orchestrates all incoming message handling
 
 const { updateLastInteraction } = require('../../db.js');
-const { handleOnboarding, sendHelpMessage } = require('../services/onboarding.service');
-const { parseIntent } = require('../parsers/intent.parser');
+const { handleOnboarding, sendHelpMessage, WELCOME_MESSAGE } = require('../services/onboarding.service');
+const { parseIntentWithLLM } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
 const { markWelcomeSeen } = require('../../db.js');
 const { safeRewrite, sendWhatsAppMessage } = require('../services/whatsapp.service');
 const {
   saveBirthdayForUser,
-  saveBirthdayFromMessage,
-  saveBirthdayFromLegacyPattern,
   deleteBirthdayForUser,
   updateBirthdayForUser,
   listBirthdaysForUser,
   listBirthdaysForMonth,
-  searchBirthdayByName,
-  searchBirthdaysByDate,
-  listUpcomingBirthdaysForUser,
   fuzzySearchBirthdayByName
 } = require('../services/birthday.service');
 const { formatBirthdaysChronologically } = require('../formatters/birthday.formatter');
@@ -26,8 +21,6 @@ const {
   getCurrentMonthName,
   normalizeMonthToShort
 } = require('../utils/month.utils');
-const { parseNameAndDate } = require('../parsers/date.parser');
-const { isSearchIntent, extractSearchQuery } = require('../utils/searchIntent');
 const { logEvent } = require('../utils/betterstack');
 
 async function handleIncomingMessage(req, res) {
@@ -67,7 +60,7 @@ async function handleIncomingMessage(req, res) {
       return res.sendStatus(200);
     }
 
-    // Multi-line birthday processing
+    // Multi-line birthday processing (before LLM parsing)
     const multilineResult = await processMultilineMessage(phone, message);
     if (multilineResult) {
       // Mark user as having seen welcome after successful multi-line save
@@ -83,290 +76,135 @@ async function handleIncomingMessage(req, res) {
       return res.sendStatus(200);
     }
 
-    // LLM Intent Parsing (before regex fallback)
-    const parsed = await parseIntent(message);
+    // 🔥 LLM INTENT PARSING (at the very top, after onboarding and help)
+    const parsed = await parseIntentWithLLM(message);
 
-    // Handle list intents FIRST (before welcome check) to ensure they never trigger welcome
-    if (parsed.intent === 'list_all') {
-      await listBirthdaysForUser(phone, formatBirthdaysChronologically);
+    // Handle clarification requests
+    if (parsed.needs_clarification && parsed.clarification_question) {
+      const reply = await safeRewrite(parsed.clarification_question);
+      await sendWhatsAppMessage(phone, reply);
       return res.sendStatus(200);
     }
 
-    if (parsed.intent === 'list_month') {
-      // Priority 1: Check if explicit month is mentioned in message
-      let month = extractMonthFromText(message);
-      let monthName;
-      
-      if (month) {
-        // Explicit month found in message - use it
-        monthName = month.charAt(0).toUpperCase() + month.slice(1);
-        console.log(`[LIST_MONTH] Using explicit month from message: ${monthName}`);
-      } else if (lowerMessage.includes('this month')) {
-        // Priority 2: User said "this month" - use current month
-        month = getCurrentMonthAbbrev();
-        monthName = getCurrentMonthName();
-        console.log(`[LIST_MONTH] Using current month (this month): ${monthName}`);
-      } else {
-        // Priority 3: Fallback to current month (for backward compatibility)
-        month = getCurrentMonthAbbrev();
-        monthName = getCurrentMonthName();
-        console.log(`[LIST_MONTH] No explicit month found, using current month: ${monthName}`);
-      }
-      
-      await listBirthdaysForMonth(phone, month, monthName);
-      return res.sendStatus(200);
-    }
-
-    // Check for list intents via regex (also before welcome check)
-    if (
-      lowerMessage.includes('all birthdays') ||
-      lowerMessage.includes('complete list') ||
-      lowerMessage.includes('everything saved')
-    ) {
-      await listBirthdaysForUser(phone, formatBirthdaysChronologically);
-      return res.sendStatus(200);
-    }
-
-    // Regex fallback: "this month" (only if no explicit month name is present)
-    const explicitMonthInMessage = extractMonthFromText(message);
-    if (lowerMessage.includes('this month') && !explicitMonthInMessage) {
-      const month = getCurrentMonthAbbrev();
-      const monthName = getCurrentMonthName();
-      console.log(`[REGEX FALLBACK] "this month" detected, using current month: ${monthName}`);
-      await listBirthdaysForMonth(phone, month, monthName);
-      return res.sendStatus(200);
-    }
-
-    // Handle LLM-parsed intents
-    if (parsed.intent === 'save') {
-      // Prefer deterministic parser; fall back to LLM fields if needed
-      const parsedDate = parseNameAndDate(message);
-      let name;
-      let day;
-      let month;
-
-      if (parsedDate) {
-        name = parsedDate.name.trim();
-        day = parsedDate.day;
-        month = parsedDate.month;
-      } else {
-        name = (parsed.name || '').trim();
-        day = parseInt(parsed.day, 10);
-        month = parsed.month;
-      }
-
-      if (name && day && month) {
-        const result = await saveBirthdayForUser(phone, name, day, month);
-        if (result.success || result.duplicate) {
+    // Switch-based intent handling
+    switch (parsed.intent) {
+      case 'save':
+        // Validate required fields
+        if (!parsed.name || !parsed.day || !parsed.month) {
+          const clarification = await safeRewrite("Whose birthday and which date should I save?");
+          await sendWhatsAppMessage(phone, clarification);
           return res.sendStatus(200);
         }
-      }
-      // If we still don't have a valid triplet, fall through to regex logic
-    }
-
-    if (parsed.intent === 'delete') {
-      const inputName = parsed.name.trim();
-      await deleteBirthdayForUser(phone, inputName);
-      return res.sendStatus(200);
-    }
-
-    if (parsed.intent === 'update') {
-      const name = parsed.name.trim();
-      const day = parseInt(parsed.day);
-      const month = parsed.month;
-      const result = await updateBirthdayForUser(phone, name, day, month);
-      if (result.success) {
-        return res.sendStatus(200);
-      }
-      // Invalid month, fall through to regex logic
-    }
-
-    // If intent is "unknown", fall through to existing regex logic below
-
-    // 3️⃣ Delete (regex fallback)
-    const deleteMatch = lowerMessage.match(/^(?:delete|remove)\s+(.+)$/);
-    if (deleteMatch) {
-      const inputName = deleteMatch[1].trim();
-      await deleteBirthdayForUser(phone, inputName);
-      return res.sendStatus(200);
-    }
-
-    // 4️⃣ Update (regex fallback)
-    const updateMatch = lowerMessage.match(
-      /^(?:change|update)\s+(.+?)\s+(?:to|birthday to)\s+([a-z]+)\s+(\d+)$/i
-    );
-    if (updateMatch) {
-      const [, name, month, day] = updateMatch;
-      const result = await updateBirthdayForUser(phone, name.trim(), parseInt(day), month);
-      if (result.success) {
-        return res.sendStatus(200);
-      }
-    }
-
-    // 5️⃣ Save (with flexible date parsing)
-    const saveResult = await saveBirthdayFromMessage(phone, message);
-    if (saveResult.success || saveResult.duplicate) {
-      return res.sendStatus(200);
-    }
-
-    // Legacy save pattern fallback ("Name Month Day")
-    const legacySaveResult = await saveBirthdayFromLegacyPattern(phone, message);
-    if (legacySaveResult.success || legacySaveResult.duplicate) {
-      return res.sendStatus(200);
-    }
-
-    // SEARCH FEATURES - Search by name, date, month, and upcoming birthdays
-    
-    // 1️⃣ Search by name (LLM intent)
-    if (parsed.intent === 'search_name' && parsed.name) {
-      const searchName = parsed.name.trim();
-      await searchBirthdayByName(phone, searchName);
-      return res.sendStatus(200);
-    }
-    
-    // 2️⃣ Search by date (LLM intent)
-    if (parsed.intent === 'search_date' && parsed.day && parsed.month) {
-      const day = parseInt(parsed.day);
-      const month = parsed.month;
-      const normalizedMonth = normalizeMonthToShort(month);
-      
-      if (normalizedMonth) {
-        await searchBirthdaysByDate(phone, day, normalizedMonth);
-        return res.sendStatus(200);
-      }
-    }
-    
-    // 3️⃣ Search by month (LLM intent)
-    if (parsed.intent === 'search_month') {
-      // Priority: Use explicit month from message text, then LLM parsed month, then current month
-      let normalizedMonth = extractMonthFromText(message);
-      
-      if (!normalizedMonth && parsed.month) {
-        // Fallback to LLM parsed month if extraction didn't find one
-        normalizedMonth = normalizeMonthToShort(parsed.month);
-        if (normalizedMonth) {
-          console.log(`[SEARCH_MONTH] Using LLM parsed month: "${parsed.month}" → "${normalizedMonth}"`);
-        }
-      }
-      
-      if (normalizedMonth) {
-        const monthName = normalizedMonth.charAt(0).toUpperCase() + normalizedMonth.slice(1);
-        await listBirthdaysForMonth(phone, normalizedMonth, monthName);
-        return res.sendStatus(200);
-      }
-    }
-    
-    // 4️⃣ Upcoming birthdays (LLM intent)
-    if (parsed.intent === 'upcoming') {
-      await listUpcomingBirthdaysForUser(phone);
-      return res.sendStatus(200);
-    }
-    
-    // REGEX FALLBACKS for search features
-    
-    // Search by name (regex fallback)
-    const searchNameMatch = lowerMessage.match(/(?:when is|show me|birthday of|birthday)\s+([a-z\s]+?)(?:\s+birthday|\?|$)/i);
-    if (searchNameMatch) {
-      const searchName = searchNameMatch[1].trim();
-      if (searchName && searchName.length > 0) {
-        await searchBirthdayByName(phone, searchName);
-        return res.sendStatus(200);
-      }
-    }
-    
-    // Search by date (regex fallback)
-    const searchDateMatch = lowerMessage.match(/(?:who has birthday on|birthdays on|who is born on)\s+(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)/i);
-    if (searchDateMatch) {
-      const day = parseInt(searchDateMatch[1]);
-      const month = searchDateMatch[2];
-      const normalizedMonth = normalizeMonthToShort(month);
-      
-      if (normalizedMonth) {
-        await searchBirthdaysByDate(phone, day, normalizedMonth);
-        return res.sendStatus(200);
-      }
-    }
-    
-    // Search by date (numeric format: 14/12, 2/6)
-    const numericDateMatch = lowerMessage.match(/(?:birthdays on|who has birthday on)\s+(\d{1,2})[\/-](\d{1,2})/i);
-    if (numericDateMatch) {
-      const day = parseInt(numericDateMatch[1]);
-      const monthNum = parseInt(numericDateMatch[2]);
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      if (monthNum >= 1 && monthNum <= 12) {
-        const normalizedMonth = monthNames[monthNum - 1];
-        await searchBirthdaysByDate(phone, day, normalizedMonth);
-        return res.sendStatus(200);
-      }
-    }
-    
-    // Search by month (regex fallback)
-    const searchMonthMatch = lowerMessage.match(/(?:show me|who has birthday in|birthdays in)\s+([a-z]+)/i);
-    if (searchMonthMatch) {
-      const month = searchMonthMatch[1];
-      const normalizedMonth = normalizeMonthToShort(month);
-      
-      if (normalizedMonth) {
-        console.log(`[REGEX FALLBACK] Found month "${month}" → normalized to "${normalizedMonth}"`);
-        const monthName = normalizedMonth.charAt(0).toUpperCase() + normalizedMonth.slice(1);
-        await listBirthdaysForMonth(phone, normalizedMonth, monthName);
-        return res.sendStatus(200);
-      }
-    }
-    
-    // Additional regex: "what are the birthdays in March?" pattern
-    const whatBirthdaysMatch = lowerMessage.match(/(?:what are|what're|what's)\s+(?:the\s+)?birthdays?\s+in\s+([a-z]+)/i);
-    if (whatBirthdaysMatch) {
-      const month = whatBirthdaysMatch[1];
-      const normalizedMonth = normalizeMonthToShort(month);
-      
-      if (normalizedMonth) {
-        console.log(`[REGEX FALLBACK] Found month in "what are birthdays in" pattern: "${month}" → "${normalizedMonth}"`);
-        const monthName = normalizedMonth.charAt(0).toUpperCase() + normalizedMonth.slice(1);
-        await listBirthdaysForMonth(phone, normalizedMonth, monthName);
-        return res.sendStatus(200);
-      }
-    }
-    
-    // Upcoming birthdays (regex fallback)
-    if (lowerMessage.includes('upcoming birthdays') || 
-        lowerMessage.includes('birthdays coming up') ||
-        lowerMessage.includes('birthdays in next 30 days') ||
-        lowerMessage.includes('who has birthday soon')) {
-      await listUpcomingBirthdaysForUser(phone);
-      return res.sendStatus(200);
-    }
-
-    // 6️⃣ Fuzzy name search (ONLY if explicit search intent detected)
-    // Only trigger if user explicitly uses search-related verbs
-    if (isSearchIntent(message)) {
-      console.log('🔍 Fuzzy search triggered for:', message);
-      
-      // Extract the name/query from the search message
-      const searchQuery = extractSearchQuery(message).trim();
-      
-      // Skip if query is empty or looks like a date pattern
-      if (searchQuery.length > 0 && searchQuery.length <= 50) {
-        const looksLikeDate = /\d{1,2}[\/-]\d{1,2}|\d{1,2}(st|nd|rd|th)/i.test(searchQuery);
         
-        if (!looksLikeDate) {
-          const fuzzyResult = await fuzzySearchBirthdayByName(phone, searchQuery);
-          if (fuzzyResult.found) {
-            return res.sendStatus(200);
-          }
-          // If no fuzzy match found, fall through to help message
+        // Use LLM-extracted values
+        const saveResult = await saveBirthdayForUser(phone, parsed.name, parsed.day, parsed.month);
+        if (saveResult.success || saveResult.duplicate) {
+          await markWelcomeSeen(phone);
+          return res.sendStatus(200);
         }
-      }
+        // If save failed, fall through to unknown
+        break;
+
+      case 'update':
+        // Validate required fields
+        if (!parsed.name || !parsed.day || !parsed.month) {
+          const clarification = await safeRewrite("Whose birthday should I update and what's the new date?");
+          await sendWhatsAppMessage(phone, clarification);
+          return res.sendStatus(200);
+        }
+        
+        const updateResult = await updateBirthdayForUser(phone, parsed.name, parsed.day, parsed.month);
+        if (updateResult.success) {
+          return res.sendStatus(200);
+        }
+        // If update failed, fall through to unknown
+        break;
+
+      case 'delete':
+        // Validate required fields
+        if (!parsed.name) {
+          const clarification = await safeRewrite("Whose birthday should I delete?");
+          await sendWhatsAppMessage(phone, clarification);
+          return res.sendStatus(200);
+        }
+        
+        await deleteBirthdayForUser(phone, parsed.name);
+        return res.sendStatus(200);
+
+      case 'list_all':
+        await listBirthdaysForUser(phone, formatBirthdaysChronologically);
+        return res.sendStatus(200);
+
+      case 'list_month':
+        // Determine month: use parsed.month if available, otherwise extract from message, otherwise current month
+        let month = null;
+        let monthName = null;
+        
+        if (parsed.month) {
+          month = normalizeMonthToShort(parsed.month);
+          if (month) {
+            monthName = month.charAt(0).toUpperCase() + month.slice(1);
+          }
+        }
+        
+        if (!month) {
+          // Try extracting from message text
+          const extractedMonth = extractMonthFromText(message);
+          if (extractedMonth) {
+            month = normalizeMonthToShort(extractedMonth);
+            if (month) {
+              monthName = month.charAt(0).toUpperCase() + month.slice(1);
+            }
+          }
+        }
+        
+        if (!month) {
+          // Fallback to current month
+          month = getCurrentMonthAbbrev();
+          monthName = getCurrentMonthName();
+        }
+        
+        await listBirthdaysForMonth(phone, month, monthName);
+        return res.sendStatus(200);
+
+      case 'search':
+        // Validate query
+        if (!parsed.query || parsed.query.trim().length === 0) {
+          const clarification = await safeRewrite("What should I search for?");
+          await sendWhatsAppMessage(phone, clarification);
+          return res.sendStatus(200);
+        }
+        
+        const searchQuery = parsed.query.trim();
+        // Skip if query looks like a date pattern
+        const looksLikeDate = /\d{1,2}[\/-]\d{1,2}|\d{1,2}(st|nd|rd|th)/i.test(searchQuery);
+        if (looksLikeDate) {
+          // Fall through to unknown
+          break;
+        }
+        
+        const fuzzyResult = await fuzzySearchBirthdayByName(phone, searchQuery);
+        if (fuzzyResult.found) {
+          return res.sendStatus(200);
+        }
+        // If no match found, fall through to unknown
+        break;
+
+      case 'help':
+        await sendHelpMessage(phone);
+        return res.sendStatus(200);
+
+      case 'unknown':
+      default:
+        // Guardrail: Always reply with birthday-only message for unknown intents
+        const fallback = await safeRewrite("I can only help with saving and managing birthdays 😊");
+        await sendWhatsAppMessage(phone, fallback);
+        return res.sendStatus(200);
     }
 
-    // 7️⃣ Final Fallback
-    // All existing users (who reach here) get the standard fallback message
-    const help = await safeRewrite(
-      'I don\'t think I understand that. \n\n' +
-      'Not sure what to do? Just type *help*.'
-    );
-    await sendWhatsAppMessage(phone, help);
+    // If we reach here, something went wrong - send fallback
+    const fallback = await safeRewrite("I can only help with saving and managing birthdays 😊");
+    await sendWhatsAppMessage(phone, fallback);
     return res.sendStatus(200);
 
   } catch (err) {
@@ -378,4 +216,3 @@ async function handleIncomingMessage(req, res) {
 module.exports = {
   handleIncomingMessage
 };
-

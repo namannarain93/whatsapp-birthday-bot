@@ -63,7 +63,15 @@ You MUST only rewrite what is given.
 
 async function parseIntentWithLLM(message) {
   if (!message || !message.trim()) {
-    return { intent: 'unknown' };
+    return {
+      intent: 'unknown',
+      name: null,
+      day: null,
+      month: null,
+      query: null,
+      needs_clarification: false,
+      clarification_question: null
+    };
   }
 
   try {
@@ -74,41 +82,68 @@ async function parseIntentWithLLM(message) {
       messages: [
         {
           role: 'system',
-          content: `You are an intent classifier and entity extractor for a birthday reminder bot.
+          content: `You are a birthday assistant bot.
 
-Your ONLY job is to extract structured data from user messages and output valid JSON.
+Your ONLY job is to help the user:
+- save birthdays
+- update birthdays
+- delete birthdays
+- list birthdays
+- search birthdays
 
-OUTPUT FORMATS (choose exactly one):
+You must NOT answer any questions outside of birthdays.
+If the user asks anything unrelated, respond with intent = unknown.
 
-1. Save birthday: { "intent": "save", "name": "Papa", "day": 14, "month": "Dec" }
-2. Delete birthday: { "intent": "delete", "name": "Papa" }
-3. Update birthday: { "intent": "update", "name": "Papa", "day": 15, "month": "Dec" }
-4. List all birthdays: { "intent": "list_all" }
-5. List this month: { "intent": "list_month" }
-6. Unknown/unsure: { "intent": "unknown" }
+Always respond in strict JSON.
+Never include explanations.
+Never include text outside JSON.
 
-STRICT RULES:
-- Output ONLY valid JSON, no prose, no emojis, no explanations
-- Month must be abbreviated (Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec)
-- Day must be a number (extract from "14th", "14", etc.)
-- Name should be the person's name (trimmed, no extra words)
-- If you cannot clearly identify intent or extract required fields, return { "intent": "unknown" }
-- Never guess or invent data
-- For list intents, do not extract name/day/month
+If the user's message is ambiguous, set:
+needs_clarification = true
+and provide a short clarification_question.
+
+If the user provides a name that contains numbers, treat the full string as the name.
+Do NOT assume numbers are dates unless clearly associated with a month or date word.
+
+Supported intents:
+- save
+- update
+- delete
+- list_all
+- list_month
+- search
+- help
+- unknown
+
+OUTPUT FORMAT (always return this exact structure):
+{
+  "intent": "save | update | delete | list_all | list_month | search | help | unknown",
+  "name": "string or null",
+  "day": number or null,
+  "month": "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec or null",
+  "query": "string or null (for search intent)",
+  "needs_clarification": boolean,
+  "clarification_question": "string or null"
+}
 
 EXAMPLES:
-"Papa Dec 14th" → { "intent": "save", "name": "Papa", "day": 14, "month": "Dec" }
-"save papa 14th dec" → { "intent": "save", "name": "Papa", "day": 14, "month": "Dec" }
-"apa on 14th Dec" → { "intent": "save", "name": "apa", "day": 14, "month": "Dec" }
-"delete papa" → { "intent": "delete", "name": "Papa" }
-"change papa to dec 15" → { "intent": "update", "name": "Papa", "day": 15, "month": "Dec" }
-"what are all the birthdays" → { "intent": "list_all" }
-"whose birthday is this month" → { "intent": "list_month" }
-"hello" → { "intent": "unknown" }`.trim(),
+"Papa Dec 14th" → {"intent":"save","name":"Papa","day":14,"month":"Dec","query":null,"needs_clarification":false,"clarification_question":null}
+"Naman HBS'24 aug 29" → {"intent":"save","name":"Naman HBS'24","day":29,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}
+"apa on 14th Dec" → {"intent":"save","name":"apa","day":14,"month":"Dec","query":null,"needs_clarification":false,"clarification_question":null}
+"delete papa" → {"intent":"delete","name":"Papa","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"change name of save varun to varun" → {"intent":"update","name":"varun","day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"What date should I update Varun's birthday to?"}
+"change papa to dec 15" → {"intent":"update","name":"Papa","day":15,"month":"Dec","query":null,"needs_clarification":false,"clarification_question":null}
+"complete list" → {"intent":"list_all","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"birthdays this month" → {"intent":"list_month","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"find anu" → {"intent":"search","name":null,"day":null,"month":null,"query":"anu","needs_clarification":false,"clarification_question":null}
+"search momm" → {"intent":"search","name":null,"day":null,"month":null,"query":"momm","needs_clarification":false,"clarification_question":null}
+"help" → {"intent":"help","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"hi" → {"intent":"unknown","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"what is the capital of france" → {"intent":"unknown","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}`.trim(),
         },
         {
           role: 'user',
-          content: message,
+          content: `User message: "${message}"`,
         },
       ],
     });
@@ -116,27 +151,51 @@ EXAMPLES:
     const content = response.choices[0].message.content.trim();
     const parsed = JSON.parse(content);
 
-    // Validate the parsed result
-    if (!parsed.intent) {
-      return { intent: 'unknown' };
+    // Ensure all required fields exist with defaults
+    const result = {
+      intent: parsed.intent || 'unknown',
+      name: parsed.name || null,
+      day: parsed.day !== undefined && parsed.day !== null ? parseInt(parsed.day, 10) : null,
+      month: parsed.month || null,
+      query: parsed.query || null,
+      needs_clarification: parsed.needs_clarification === true,
+      clarification_question: parsed.clarification_question || null
+    };
+
+    // Normalize month to proper case (Jan, Feb, etc.)
+    if (result.month) {
+      const monthLower = result.month.toLowerCase();
+      const monthMap = {
+        'jan': 'Jan', 'january': 'Jan',
+        'feb': 'Feb', 'february': 'Feb',
+        'mar': 'Mar', 'march': 'Mar',
+        'apr': 'Apr', 'april': 'Apr',
+        'may': 'May',
+        'jun': 'Jun', 'june': 'Jun',
+        'jul': 'Jul', 'july': 'Jul',
+        'aug': 'Aug', 'august': 'Aug',
+        'sep': 'Sep', 'september': 'Sep',
+        'oct': 'Oct', 'october': 'Oct',
+        'nov': 'Nov', 'november': 'Nov',
+        'dec': 'Dec', 'december': 'Dec'
+      };
+      result.month = monthMap[monthLower] || result.month;
     }
 
-    // Validate required fields for each intent
-    if (parsed.intent === 'save' && (!parsed.name || !parsed.day || !parsed.month)) {
-      return { intent: 'unknown' };
-    }
-    if (parsed.intent === 'delete' && !parsed.name) {
-      return { intent: 'unknown' };
-    }
-    if (parsed.intent === 'update' && (!parsed.name || !parsed.day || !parsed.month)) {
-      return { intent: 'unknown' };
-    }
-
-    console.log('🤖 LLM parsed intent:', parsed);
-    return parsed;
+    console.log('🤖 LLM parsed intent:', result);
+    return result;
   } catch (err) {
-    console.error('❌ LLM parse failed, falling back to regex:', err.message);
-    return { intent: 'unknown' };
+    console.error('❌ LLM parse failed:', err.message);
+    // Return safe default on parse failure
+    return {
+      intent: 'unknown',
+      name: null,
+      day: null,
+      month: null,
+      query: null,
+      needs_clarification: false,
+      clarification_question: null
+    };
   }
 }
 

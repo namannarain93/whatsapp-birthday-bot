@@ -30,6 +30,12 @@ const pool = new Pool({
       ALTER TABLE users 
       ADD COLUMN IF NOT EXISTS last_interaction_at TIMESTAMP;
     `);
+    
+    // Add last_weekly_reminder_sent column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS last_weekly_reminder_sent TIMESTAMP;
+    `);
 
     // Create birthdays table
     await pool.query(`
@@ -412,6 +418,85 @@ async function logReminderSent(phone, date, type = 'daily_today') {
   );
 }
 
+// Get all active users with timezone (users who have at least one birthday saved)
+async function getAllActiveUsersWithTimezone() {
+  const res = await pool.query(
+    `
+    SELECT DISTINCT u.phone, u.timezone, u.last_weekly_reminder_sent
+    FROM users u
+    INNER JOIN birthdays b ON u.phone = b.phone
+    WHERE u.timezone IS NOT NULL
+    `
+  );
+  return res.rows;
+}
+
+// Get upcoming birthdays for a user within the next N days
+async function getUpcomingBirthdaysForUser(phone, days = 7) {
+  const moment = require('moment-timezone');
+  
+  // Get user's timezone
+  const userRes = await pool.query(
+    `SELECT timezone FROM users WHERE phone = $1`,
+    [phone]
+  );
+  
+  if (userRes.rows.length === 0) {
+    return [];
+  }
+  
+  const userTimezone = userRes.rows[0].timezone || 'Asia/Kolkata';
+  const now = moment().tz(userTimezone);
+  
+  // Get all birthdays for this user
+  const allBirthdays = await getAllBirthdays(phone);
+  
+  // Calculate date range (today + next N days)
+  const upcoming = [];
+  const monthToNum = {
+    'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+    'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+  };
+  
+  for (let i = 0; i < days; i++) {
+    const checkDate = now.clone().add(i, 'days');
+    const checkDay = checkDate.date();
+    const checkMonthNum = checkDate.month() + 1; // moment months are 0-indexed
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const checkMonth = monthNames[checkMonthNum - 1];
+    
+    // Find birthdays matching this day and month
+    for (const b of allBirthdays) {
+      if (b.day === checkDay && b.month === checkMonth) {
+        upcoming.push({
+          name: b.name,
+          day: b.day,
+          month: b.month,
+          date: checkDate.clone() // Store the actual date for formatting
+        });
+      }
+    }
+  }
+  
+  // Sort by date
+  upcoming.sort((a, b) => a.date.valueOf() - b.date.valueOf());
+  
+  return upcoming;
+}
+
+// Update last weekly reminder sent timestamp for a user
+async function updateLastWeeklyReminderSent(phone, timestamp) {
+  await pool.query(
+    `
+    UPDATE users
+    SET last_weekly_reminder_sent = $2
+    WHERE phone = $1
+    `,
+    [phone, timestamp]
+  );
+}
+
 module.exports = {
   saveBirthday,
   birthdayExists,
@@ -433,5 +518,8 @@ module.exports = {
   getAllUsers,
   updateLastInteraction,
   hasReminderBeenSentToday,
-  logReminderSent
+  logReminderSent,
+  getAllActiveUsersWithTimezone,
+  getUpcomingBirthdaysForUser,
+  updateLastWeeklyReminderSent
 };

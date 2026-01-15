@@ -5,8 +5,9 @@ const webhookRoutes = require('./src/routes/webhook.routes');
 // Initialize database (import triggers table creation)
 require('./db.js');
 
-// Import reminder scheduler
+// Import reminder schedulers
 const { startReminderScheduler } = require('./reminder.js');
+const { startWeeklyReminderScheduler } = require('./weeklyReminderJob.js');
 
 const app = express();
 
@@ -71,6 +72,8 @@ app.get('/send-test', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('Bot is alive on port', PORT);
-  // Start reminder scheduler (runs every 5 minutes, checks for 9am local time)
+  // Start daily reminder scheduler (runs every 30 minutes, checks for 9am local time)
   startReminderScheduler();
+  // Start weekly reminder scheduler (runs every 30 minutes, checks for Sunday 9am local time)
+  startWeeklyReminderScheduler();
 });

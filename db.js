@@ -32,10 +32,19 @@ const pool = new Pool({
     `);
     
     // Add last_weekly_reminder_sent column if it doesn't exist (for existing databases)
+    // Use DO block for safer migration (works in all PostgreSQL versions)
     await pool.query(`
-      ALTER TABLE users 
-      ADD COLUMN IF NOT EXISTS last_weekly_reminder_sent TIMESTAMP;
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'users' AND column_name = 'last_weekly_reminder_sent'
+        ) THEN
+          ALTER TABLE users ADD COLUMN last_weekly_reminder_sent TIMESTAMP;
+        END IF;
+      END $$;
     `);
+    console.log('✅ Weekly reminder column ensured');
 
     // Create birthdays table
     await pool.query(`

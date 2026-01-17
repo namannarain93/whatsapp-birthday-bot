@@ -34,7 +34,7 @@ async function sendTemplateMessage(to, templateName, parametersArray) {
         type: 'template',
         template: {
           name: templateName,
-          language: { code: 'en' },
+          language: { code: 'en_US' },
           components: [
             {
               type: 'body',

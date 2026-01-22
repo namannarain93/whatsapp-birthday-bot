@@ -17,11 +17,15 @@ const {
   updateLastWeeklyReminderSent
 } = require('./db.js');
 
-// WhatsApp template name constant
-const TEMPLATE_NAME = 'weekly_birthday_reminders';
+// Centralized WhatsApp template configuration
+const TEMPLATE_CONFIG = {
+  name: 'weekly_birthday_reminders',
+  language: { code: 'en' }
+};
 
 // Send WhatsApp template message
-async function sendTemplateMessage(to, templateName, parametersArray) {
+// Uses centralized TEMPLATE_CONFIG to prevent template name/language mismatches
+async function sendTemplateMessage(to, parametersArray) {
   const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
 
   try {
@@ -36,8 +40,8 @@ async function sendTemplateMessage(to, templateName, parametersArray) {
         to,
         type: 'template',
         template: {
-          name: templateName,
-          language: { code: 'en_US' },
+          name: TEMPLATE_CONFIG.name,
+          language: TEMPLATE_CONFIG.language,
           components: [
             {
               type: 'body',
@@ -53,10 +57,25 @@ async function sendTemplateMessage(to, templateName, parametersArray) {
 
     const data = await response.json();
     if (data.error) {
+      // Enhanced error logging for debugging template issues
+      console.error(`[DAILY_REMINDER] ❌ WhatsApp API error for ${to}:`, {
+        error: data.error.message || 'Unknown error',
+        errorCode: data.error.code,
+        templateName: TEMPLATE_CONFIG.name,
+        languageCode: TEMPLATE_CONFIG.language.code,
+        recipientPhone: to
+      });
       throw new Error(data.error.message || 'WhatsApp API error');
     }
     return data;
   } catch (err) {
+    // Enhanced error logging for network/other errors
+    console.error(`[DAILY_REMINDER] ❌ Send error for ${to}:`, {
+      error: err.message,
+      templateName: TEMPLATE_CONFIG.name,
+      languageCode: TEMPLATE_CONFIG.language.code,
+      recipientPhone: to
+    });
     throw err;
   }
 }
@@ -156,7 +175,7 @@ async function runWeeklyUpcomingBirthdaysJob() {
         console.log(`[DAILY_REMINDER] 📊 Final body parameter: "${formattedList}"`);
         
         // Send template message (always send, even if no birthdays)
-        await sendTemplateMessage(phone, TEMPLATE_NAME, [formattedList]);
+        await sendTemplateMessage(phone, [formattedList]);
         
         // Update last weekly reminder sent timestamp
         await updateLastWeeklyReminderSent(phone, today.toISOString());

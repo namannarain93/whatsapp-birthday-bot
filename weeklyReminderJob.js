@@ -17,6 +17,9 @@ const {
   updateLastWeeklyReminderSent
 } = require('./db.js');
 
+// WhatsApp template name constant
+const TEMPLATE_NAME = 'weekly_birthday_reminders';
+
 // Send WhatsApp template message
 async function sendTemplateMessage(to, templateName, parametersArray) {
   const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
@@ -115,21 +118,18 @@ async function runWeeklyUpcomingBirthdaysJob() {
         
         // Get current time in user's timezone
         const now = moment().tz(userTimezone);
-        const currentHour = now.hour();
-        const currentMinute = now.minute();
-        
-        // Check if it's 9:00 AM (±2 min window: 8:58 to 9:02)
-        // Allow 8:58, 8:59, 9:00, 9:01, 9:02
-        const isInWindow = 
-          (currentHour === 8 && currentMinute >= 58) ||
-          (currentHour === 9 && currentMinute <= 2);
-        
-        if (!isInWindow) {
-          continue;
-        }
         
         // Get today's date (start of day)
         const today = now.clone().startOf('day');
+        
+        // Compute today at 9:00 AM in user's timezone
+        const todayAt9AM = today.clone().hour(9).minute(0).second(0).millisecond(0);
+        
+        // Check if current time is after today's 9:00 AM
+        if (now.isBefore(todayAt9AM)) {
+          // It's before 9:00 AM, skip this user
+          continue;
+        }
         
         // Check if reminder was already sent today (idempotent check)
         const alreadySent = await hasDailyReminderBeenSentToday(phone, today);
@@ -156,7 +156,7 @@ async function runWeeklyUpcomingBirthdaysJob() {
         console.log(`[DAILY_REMINDER] 📊 Final body parameter: "${formattedList}"`);
         
         // Send template message (always send, even if no birthdays)
-        await sendTemplateMessage(phone, 'birthday_upcoming_week', [formattedList]);
+        await sendTemplateMessage(phone, TEMPLATE_NAME, [formattedList]);
         
         // Update last weekly reminder sent timestamp
         await updateLastWeeklyReminderSent(phone, today.toISOString());

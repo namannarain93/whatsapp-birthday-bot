@@ -10,6 +10,7 @@ const {
   saveBirthdayForUser,
   deleteBirthdayForUser,
   updateBirthdayForUser,
+  renamePersonForUser,
   listBirthdaysForUser,
   listBirthdaysForMonth,
   fuzzySearchBirthdayByName
@@ -120,15 +121,31 @@ async function handleIncomingMessage(req, res) {
         // If update failed, fall through to unknown
         break;
 
+      case 'rename':
+        // Validate required fields
+        if (!parsed.name || !parsed.new_name) {
+          const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
+          const clarification = await safeRewrite(`Whose ${eventName} should I rename and what is the new name?`);
+          await sendWhatsAppMessage(phone, clarification);
+          return res.sendStatus(200);
+        }
+
+        const renameResult = await renamePersonForUser(phone, parsed.name, parsed.new_name, parsed.event_type);
+        if (renameResult.success) {
+          return res.sendStatus(200);
+        }
+        break;
+
       case 'delete':
         // Validate required fields
         if (!parsed.name) {
-          const clarification = await safeRewrite("Whose birthday should I delete?");
+          const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
+          const clarification = await safeRewrite(`Whose ${eventName} should I delete?`);
           await sendWhatsAppMessage(phone, clarification);
           return res.sendStatus(200);
         }
         
-        await deleteBirthdayForUser(phone, parsed.name);
+        await deleteBirthdayForUser(phone, parsed.name, parsed.event_type);
         return res.sendStatus(200);
 
       case 'list_all':

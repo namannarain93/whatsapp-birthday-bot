@@ -282,49 +282,56 @@ async function getUpcomingBirthdays(phone, fromDay, fromMonth, toDay, toMonth) {
 
 // Delete birthday
 // Supports both exact match and fuzzy/partial match for corrupted names
-async function deleteBirthday(phone, name) {
+async function deleteBirthday(phone, name, type = null) {
+  let query = 'DELETE FROM birthdays WHERE phone = $1 AND LOWER(name) = LOWER($2)';
+  let params = [phone, name];
+
+  if (type) {
+    query += ' AND type = $3';
+    params.push(type);
+  }
+
   // First try exact match (case-insensitive)
-  const exactRes = await pool.query(
-    `
-    DELETE FROM birthdays
-    WHERE phone = $1 AND LOWER(name) = LOWER($2)
-    `,
-    [phone, name]
-  );
+  const exactRes = await pool.query(query, params);
   
   if (exactRes.rowCount > 0) {
-    console.log(`[DELETE] Exact match deleted ${exactRes.rowCount} row(s) for phone=${phone}, name="${name}"`);
+    console.log(`[DELETE] Exact match deleted ${exactRes.rowCount} row(s) for phone=${phone}, name="${name}", type="${type || 'any'}"`);
     return true;
   }
   
   // If exact match failed, try fuzzy/partial match
-  const fuzzyRes = await pool.query(
-    `
-    DELETE FROM birthdays
-    WHERE phone = $1 AND LOWER(name) LIKE LOWER('%' || $2 || '%')
-    `,
-    [phone, name]
-  );
+  let fuzzyQuery = 'DELETE FROM birthdays WHERE phone = $1 AND LOWER(name) LIKE LOWER(\'%\' || $2 || \'%\')';
+  let fuzzyParams = [phone, name];
+
+  if (type) {
+    fuzzyQuery += ' AND type = $3';
+    fuzzyParams.push(type);
+  }
+
+  const fuzzyRes = await pool.query(fuzzyQuery, fuzzyParams);
   
   if (fuzzyRes.rowCount > 0) {
-    console.log(`[DELETE] Fuzzy match deleted ${fuzzyRes.rowCount} row(s) for phone=${phone}, name="${name}"`);
+    console.log(`[DELETE] Fuzzy match deleted ${fuzzyRes.rowCount} row(s) for phone=${phone}, name="${name}", type="${type || 'any'}"`);
     return true;
   }
   
-  console.log(`[DELETE] No match found for phone=${phone}, name="${name}"`);
+  console.log(`[DELETE] No match found for phone=${phone}, name="${name}", type="${type || 'any'}"`);
   return false;
 }
 
 // Verify birthday exists (for post-delete verification)
-async function birthdayExistsByName(phone, name) {
-  const res = await pool.query(
-    `
-    SELECT 1 FROM birthdays
-    WHERE phone = $1 AND LOWER(name) = LOWER($2)
-    LIMIT 1
-    `,
-    [phone, name]
-  );
+async function birthdayExistsByName(phone, name, type = null) {
+  let query = 'SELECT 1 FROM birthdays WHERE phone = $1 AND LOWER(name) = LOWER($2)';
+  let params = [phone, name];
+
+  if (type) {
+    query += ' AND type = $3';
+    params.push(type);
+  }
+
+  query += ' LIMIT 1';
+
+  const res = await pool.query(query, params);
   return res.rowCount > 0;
 }
 
@@ -341,15 +348,16 @@ async function updateBirthday(phone, name, day, month, type = 'birthday') {
 }
 
 // Update birthday name (rename)
-async function updateBirthdayName(phone, oldName, newName) {
-  const res = await pool.query(
-    `
-    UPDATE birthdays
-    SET name = $3
-    WHERE phone = $1 AND LOWER(name) = LOWER($2)
-    `,
-    [phone, oldName, newName]
-  );
+async function updateBirthdayName(phone, oldName, newName, type = null) {
+  let query = 'UPDATE birthdays SET name = $3 WHERE phone = $1 AND LOWER(name) = LOWER($2)';
+  let params = [phone, oldName, newName];
+
+  if (type) {
+    query += ' AND type = $4';
+    params.push(type);
+  }
+
+  const res = await pool.query(query, params);
   return res.rowCount > 0;
 }
 

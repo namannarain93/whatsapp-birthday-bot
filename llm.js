@@ -87,6 +87,7 @@ async function parseIntentWithLLM(message) {
 Your ONLY job is to help the user:
 - save dates (birthdays or anniversaries)
 - update dates
+- rename people
 - delete dates
 - list dates
 - search dates
@@ -113,6 +114,7 @@ Do NOT assume numbers are dates unless clearly associated with a month or date w
 Supported intents:
 - save
 - update
+- rename
 - delete
 - list_all
 - list_month
@@ -122,9 +124,10 @@ Supported intents:
 
 OUTPUT FORMAT (always return this exact structure):
 {
-  "intent": "save | update | delete | list_all | list_month | search | help | unknown",
+  "intent": "save | update | rename | delete | list_all | list_month | search | help | unknown",
   "event_type": "birthday | anniversary",
   "name": "string or null",
+  "new_name": "string or null (only for rename intent)",
   "day": number or null,
   "month": "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec or null",
   "query": "string or null (for search intent)",
@@ -134,11 +137,12 @@ OUTPUT FORMAT (always return this exact structure):
 
 EXAMPLES:
 "Papa Dec 14th" → {"intent":"save","event_type":"birthday","name":"Papa","day":14,"month":"Dec","query":null,"needs_clarification":false,"clarification_question":null}
-"Naman HBS'24 aug 29" → {"intent":"save","event_type":"birthday","name":"Naman HBS'24","day":29,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}
+"rename gunnu sankap to Gunnu Sankalp" → {"intent":"rename","event_type":"birthday","name":"gunnu sankap","new_name":"Gunnu Sankalp","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"rename anniversary of Papa to Papa & Mama" → {"intent":"rename","event_type":"anniversary","name":"Papa","new_name":"Papa & Mama","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "Mom and Dad anniversary Oct 12" → {"intent":"save","event_type":"anniversary","name":"Mom and Dad","day":12,"month":"Oct","query":null,"needs_clarification":false,"clarification_question":null}
 "Wedding anniv tomorrow" → {"intent":"save","event_type":"anniversary","name":"Wedding","day":30,"month":"Jan","query":null,"needs_clarification":false,"clarification_question":null}
 "delete papa" → {"intent":"delete","event_type":"birthday","name":"Papa","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
-"change name of save varun to varun" → {"intent":"update","name":"varun","day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"What date should I update Varun's birthday to?"}
+"change name of save varun to varun" → {"intent":"rename","name":"save varun","new_name":"varun","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "change papa to dec 15" → {"intent":"update","name":"Papa","day":15,"month":"Dec","query":null,"needs_clarification":false,"clarification_question":null}
 "complete list" → {"intent":"list_all","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "birthdays this month" → {"intent":"list_month","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
@@ -163,6 +167,7 @@ EXAMPLES:
       intent: parsed.intent || 'unknown',
       event_type: parsed.event_type || 'birthday',
       name: parsed.name || null,
+      new_name: parsed.new_name || null,
       day: parsed.day !== undefined && parsed.day !== null ? parseInt(parsed.day, 10) : null,
       month: parsed.month || null,
       query: parsed.query || null,

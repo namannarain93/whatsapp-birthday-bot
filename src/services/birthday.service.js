@@ -11,6 +11,7 @@ const {
   getUpcomingBirthdays,
   deleteBirthday,
   updateBirthday,
+  updateBirthdayName,
   markWelcomeSeen
 } = require('../../db.js');
 const { normalizeMonthToShort } = require('../utils/month.utils');
@@ -69,11 +70,12 @@ async function saveBirthdayFromLegacyPattern(phone, message) {
 }
 
 // Delete birthday for a user
-async function deleteBirthdayForUser(phone, inputName) {
+async function deleteBirthdayForUser(phone, inputName, type = null) {
   const namesToTry = extractNamesFromDeleteInput(inputName);
   
   if (namesToTry.length === 0) {
-    const reply = await safeRewrite('I could not find this birthday. Please try again.');
+    const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
+    const reply = await safeRewrite(`I could not find this ${eventName}. Please try again.`);
     await sendWhatsAppMessage(phone, reply);
     return { success: false };
   }
@@ -82,10 +84,10 @@ async function deleteBirthdayForUser(phone, inputName) {
   const notFound = [];
 
   for (const name of namesToTry) {
-    const wasDeleted = await deleteBirthday(phone, name);
+    const wasDeleted = await deleteBirthday(phone, name, type);
     if (wasDeleted) {
       // Verify deletion succeeded
-      const stillExists = await birthdayExistsByName(phone, name);
+      const stillExists = await birthdayExistsByName(phone, name, type);
       if (!stillExists) {
         deleted.push(name);
       } else {
@@ -97,14 +99,21 @@ async function deleteBirthdayForUser(phone, inputName) {
   }
 
   if (deleted.length > 0) {
-    const replyText = deleted.length === 1
-      ? `I've removed ${deleted[0]}'s birthday.`
-      : `I've removed ${deleted.length} birthday${deleted.length > 1 ? 's' : ''}: ${deleted.join(', ')}.`;
+    let replyText;
+    const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
+    
+    if (deleted.length === 1) {
+      replyText = `I've removed ${deleted[0]}'s ${eventName}.`;
+    } else {
+      replyText = `I've removed ${deleted.length} ${eventName}${deleted.length > 1 ? 's' : ''}: ${deleted.join(', ')}.`;
+    }
+    
     const reply = await safeRewrite(replyText);
     await sendWhatsAppMessage(phone, reply);
     return { success: true, deleted };
   } else {
-    const reply = await safeRewrite('I could not find this birthday. Please try again.');
+    const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
+    const reply = await safeRewrite(`I could not find this ${eventName}. Please try again.`);
     await sendWhatsAppMessage(phone, reply);
     return { success: false };
   }
@@ -122,6 +131,22 @@ async function updateBirthdayForUser(phone, name, day, month, type = 'birthday')
   const reply = await safeRewrite(`I've updated ${name}'s ${eventName} to ${normalizedMonth} ${day}.`);
   await sendWhatsAppMessage(phone, reply);
   return { success: true };
+}
+
+// Rename person for a user
+async function renamePersonForUser(phone, oldName, newName, type = 'birthday') {
+  const success = await updateBirthdayName(phone, oldName, newName, type);
+  const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
+  
+  if (success) {
+    const reply = await safeRewrite(`I've renamed ${oldName}'s ${eventName} to ${newName}.`);
+    await sendWhatsAppMessage(phone, reply);
+    return { success: true };
+  } else {
+    const reply = await safeRewrite(`I could not find ${oldName}'s ${eventName} to rename.`);
+    await sendWhatsAppMessage(phone, reply);
+    return { success: false };
+  }
 }
 
 // List all birthdays for a user
@@ -279,6 +304,7 @@ module.exports = {
   saveBirthdayFromLegacyPattern,
   deleteBirthdayForUser,
   updateBirthdayForUser,
+  renamePersonForUser,
   listBirthdaysForUser,
   listBirthdaysForMonth,
   searchBirthdayByName,

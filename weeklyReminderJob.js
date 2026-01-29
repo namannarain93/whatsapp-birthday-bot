@@ -83,14 +83,15 @@ async function sendTemplateMessage(to, parametersArray) {
 // Format birthday list for template
 function formatBirthdayList(birthdays) {
   if (birthdays.length === 0) {
-    return 'No birthdays in the next 7 days.';
+    return 'No birthdays or anniversaries in the next 7 days.';
   }
 
   return birthdays.map(b => {
     // Format as "Name – 23 Jan"
     const day = b.day;
     const month = b.month; // Already in short form (Jan, Feb, etc.)
-    return `${b.name} – ${day} ${month}`;
+    const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
+    return `${b.name}${typeLabel} – ${day} ${month}`;
   }).join(', ');
 }
 
@@ -172,7 +173,7 @@ async function runWeeklyUpcomingBirthdaysJob() {
         
         // Guardrail: ensure parameter is never null or empty
         if (!formattedList || formattedList.trim().length === 0) {
-          formattedList = 'No birthdays in the next 7 days.';
+          formattedList = 'No birthdays or anniversaries in the next 7 days.';
         }
         
         // Log execution details

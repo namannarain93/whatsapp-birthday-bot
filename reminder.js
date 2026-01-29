@@ -97,7 +97,7 @@ async function getAllUsers() {
 async function getBirthdaysForDate(phone, day, month) {
   const res = await pool.query(
     `
-    SELECT name, day, month
+    SELECT name, day, month, type
     FROM birthdays
     WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
     ORDER BY name
@@ -188,7 +188,9 @@ async function sendBirthdayReminders() {
         }
         
         // Prepare names for message
-        const names = birthdays.map(b => b.name);
+        const names = birthdays.map(b => {
+          return b.type === 'anniversary' ? `${b.name} (Anniversary)` : b.name;
+        });
         const namesString = names.join(', ');
         
         // Always use template message (as per requirements)

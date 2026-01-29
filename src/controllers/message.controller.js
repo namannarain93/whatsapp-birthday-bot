@@ -97,7 +97,7 @@ async function handleIncomingMessage(req, res) {
         }
         
         // Use LLM-extracted values
-        const saveResult = await saveBirthdayForUser(phone, parsed.name, parsed.day, parsed.month);
+        const saveResult = await saveBirthdayForUser(phone, parsed.name, parsed.day, parsed.month, parsed.event_type);
         if (saveResult.success || saveResult.duplicate) {
           await markWelcomeSeen(phone);
           return res.sendStatus(200);
@@ -113,7 +113,7 @@ async function handleIncomingMessage(req, res) {
           return res.sendStatus(200);
         }
         
-        const updateResult = await updateBirthdayForUser(phone, parsed.name, parsed.day, parsed.month);
+        const updateResult = await updateBirthdayForUser(phone, parsed.name, parsed.day, parsed.month, parsed.event_type);
         if (updateResult.success) {
           return res.sendStatus(200);
         }
@@ -196,14 +196,14 @@ async function handleIncomingMessage(req, res) {
 
       case 'unknown':
       default:
-        // Guardrail: Always reply with birthday-only message for unknown intents
-        const fallback = await safeRewrite("I can only help with saving and managing birthdays 😊");
+        // Guardrail: Always reply with inclusive message for unknown intents
+        const fallback = await safeRewrite("I can only help with saving and managing birthdays and anniversaries 😊");
         await sendWhatsAppMessage(phone, fallback);
         return res.sendStatus(200);
     }
 
     // If we reach here, something went wrong - send fallback
-    const fallback = await safeRewrite("I can only help with saving and managing birthdays 😊");
+    const fallback = await safeRewrite("I can only help with saving and managing birthdays and anniversaries 😊");
     await sendWhatsAppMessage(phone, fallback);
     return res.sendStatus(200);
 

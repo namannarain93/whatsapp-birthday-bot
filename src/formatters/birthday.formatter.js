@@ -16,6 +16,7 @@ function formatBirthdaysChronologically(birthdays) {
   const normalized = birthdays.map(b => ({
     name: b.name,
     day: b.day,
+    type: b.type,
     monthCanonical: normalizeMonthToCanonical(b.month)
   }));
 
@@ -41,14 +42,15 @@ function formatBirthdaysChronologically(birthdays) {
   );
 
   // Build the final string
-  let result = '🎂 BIRTHDAYS 🎂\n\n';
+  let result = '🎂 BIRTHDAYS & ANNIVERSARIES 🎂\n\n';
   orderedMonths.forEach(monthKey => {
     const label = toDisplayMonthName(monthKey);
     if (!label) return;
     // Add bold formatting to month name
     result += `*${label}*\n`;
     grouped[monthKey].forEach(b => {
-      result += `• ${b.day} – ${b.name}\n`;
+      const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
+      result += `• ${b.day} – ${b.name}${typeLabel}\n`;
     });
     result += '\n';
   });

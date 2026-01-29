@@ -20,24 +20,27 @@ const { safeRewrite, sendWhatsAppMessage } = require('./whatsapp.service');
 const { findFuzzyMatches } = require('../utils/fuzzyMatch');
 
 // Save a birthday for a user
-async function saveBirthdayForUser(phone, name, day, month) {
+async function saveBirthdayForUser(phone, name, day, month, type = 'birthday') {
   const normalizedMonth = normalizeMonthToShort(month);
   if (!normalizedMonth) {
     return { success: false, error: 'Invalid month' };
   }
 
-  const exists = await birthdayExists(phone, name.trim(), day, normalizedMonth);
+  const exists = await birthdayExists(phone, name.trim(), day, normalizedMonth, type);
   if (exists) {
+    const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
     const reply = await safeRewrite(
-      `I already have ${name}'s birthday saved on ${normalizedMonth} ${day}.`
+      `I already have ${name}'s ${eventName} saved on ${normalizedMonth} ${day}.`
     );
     await sendWhatsAppMessage(phone, reply);
     return { success: false, duplicate: true };
   }
 
-  await saveBirthday(phone, name.trim(), day, normalizedMonth);
+  await saveBirthday(phone, name.trim(), day, normalizedMonth, type);
   await markWelcomeSeen(phone);
-  const reply = await safeRewrite(`I've saved ${name}'s birthday on ${normalizedMonth} ${day}. 🎂`);
+  const emoji = type === 'anniversary' ? '💍' : '🎂';
+  const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
+  const reply = await safeRewrite(`I've saved ${name}'s ${eventName} on ${normalizedMonth} ${day}. ${emoji}`);
   await sendWhatsAppMessage(phone, reply);
   return { success: true };
 }
@@ -108,14 +111,15 @@ async function deleteBirthdayForUser(phone, inputName) {
 }
 
 // Update birthday for a user
-async function updateBirthdayForUser(phone, name, day, month) {
+async function updateBirthdayForUser(phone, name, day, month, type = 'birthday') {
   const normalizedMonth = normalizeMonthToShort(month);
   if (!normalizedMonth) {
     return { success: false };
   }
 
-  await updateBirthday(phone, name, day, normalizedMonth);
-  const reply = await safeRewrite(`I've updated ${name}'s birthday to ${normalizedMonth} ${day}.`);
+  await updateBirthday(phone, name, day, normalizedMonth, type);
+  const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
+  const reply = await safeRewrite(`I've updated ${name}'s ${eventName} to ${normalizedMonth} ${day}.`);
   await sendWhatsAppMessage(phone, reply);
   return { success: true };
 }
@@ -125,7 +129,7 @@ async function listBirthdaysForUser(phone, formatBirthdaysChronologically) {
   const birthdays = await getAllBirthdays(phone);
 
   if (birthdays.length === 0) {
-    const reply = await safeRewrite('I have not saved any birthdays yet.');
+    const reply = await safeRewrite('I have not saved any birthdays or anniversaries yet.');
     await sendWhatsAppMessage(phone, reply);
     return;
   }
@@ -143,9 +147,12 @@ async function listBirthdaysForMonth(phone, month, monthName) {
 
   let reply =
     birthdays.length === 0
-      ? `I don't have any birthdays saved for ${monthName}.`
-      : `Here are the birthdays in ${monthName}:\n\n` +
-        birthdays.map(b => `• ${b.name} - ${b.month} ${b.day}`).join('\n');
+      ? `I don't have any birthdays or anniversaries saved for ${monthName}.`
+      : `Here are the important dates in ${monthName}:\n\n` +
+        birthdays.map(b => {
+          const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
+          return `• ${b.name} - ${b.month} ${b.day}${typeLabel}`;
+        }).join('\n');
 
   reply = await safeRewrite(reply);
   await sendWhatsAppMessage(phone, reply);
@@ -156,19 +163,23 @@ async function searchBirthdayByName(phone, searchName) {
   const results = await getBirthdayByName(phone, searchName);
   
   if (results.length === 0) {
-    const reply = await safeRewrite(`I don't have ${searchName}'s birthday saved yet.`);
+    const reply = await safeRewrite(`I don't have ${searchName}'s birthday or anniversary saved yet.`);
     await sendWhatsAppMessage(phone, reply);
     return;
   }
   
   if (results.length === 1) {
     const b = results[0];
-    const reply = await safeRewrite(`${b.name}'s birthday is on ${b.month} ${b.day}.`);
+    const eventName = b.type === 'anniversary' ? 'anniversary' : 'birthday';
+    const reply = await safeRewrite(`${b.name}'s ${eventName} is on ${b.month} ${b.day}.`);
     await sendWhatsAppMessage(phone, reply);
   } else {
     // Multiple matches
-    const list = results.map(b => `${b.name} - ${b.month} ${b.day}`).join('\n');
-    const reply = await safeRewrite(`I found ${results.length} birthdays matching "${searchName}":\n\n${list}`);
+    const list = results.map(b => {
+      const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
+      return `${b.name} - ${b.month} ${b.day}${typeLabel}`;
+    }).join('\n');
+    const reply = await safeRewrite(`I found ${results.length} matches for "${searchName}":\n\n${list}`);
     await sendWhatsAppMessage(phone, reply);
   }
 }
@@ -178,14 +189,19 @@ async function searchBirthdaysByDate(phone, day, normalizedMonth) {
   const results = await getBirthdaysByDate(phone, day, normalizedMonth);
   
   if (results.length === 0) {
-    const reply = await safeRewrite(`No birthdays on ${normalizedMonth} ${day}.`);
+    const reply = await safeRewrite(`No birthdays or anniversaries on ${normalizedMonth} ${day}.`);
     await sendWhatsAppMessage(phone, reply);
   } else if (results.length === 1) {
-    const reply = await safeRewrite(`${results[0].name}'s birthday is on ${normalizedMonth} ${day}.`);
+    const b = results[0];
+    const eventName = b.type === 'anniversary' ? 'anniversary' : 'birthday';
+    const reply = await safeRewrite(`${b.name}'s ${eventName} is on ${normalizedMonth} ${day}.`);
     await sendWhatsAppMessage(phone, reply);
   } else {
-    const names = results.map(b => b.name).join(', ');
-    const reply = await safeRewrite(`Birthdays on ${normalizedMonth} ${day}: ${names}`);
+    const names = results.map(b => {
+      const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
+      return `${b.name}${typeLabel}`;
+    }).join(', ');
+    const reply = await safeRewrite(`Important dates on ${normalizedMonth} ${day}: ${names}`);
     await sendWhatsAppMessage(phone, reply);
   }
 }
@@ -209,11 +225,14 @@ async function listUpcomingBirthdaysForUser(phone) {
   const upcoming = await getUpcomingBirthdays(phone, today, currentMonth, futureDay, futureMonth);
   
   if (upcoming.length === 0) {
-    const reply = await safeRewrite('No upcoming birthdays in the next 30 days.');
+    const reply = await safeRewrite('No upcoming birthdays or anniversaries in the next 30 days.');
     await sendWhatsAppMessage(phone, reply);
   } else {
-    const list = upcoming.map(b => `• ${b.day} ${b.month} – ${b.name}`).join('\n');
-    const reply = await safeRewrite(`Here are the upcoming birthdays:\n\n${list}`);
+    const list = upcoming.map(b => {
+      const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
+      return `• ${b.day} ${b.month} – ${b.name}${typeLabel}`;
+    }).join('\n');
+    const reply = await safeRewrite(`Here are the upcoming important dates:\n\n${list}`);
     await sendWhatsAppMessage(phone, reply);
   }
 }
@@ -237,12 +256,17 @@ async function fuzzySearchBirthdayByName(phone, query) {
   if (matches.length === 1) {
     // Single match - return formatted response
     const b = matches[0];
-    const reply = await safeRewrite(`${b.name}'s birthday is on ${b.month} ${b.day}. 🎂`);
+    const eventName = b.type === 'anniversary' ? 'anniversary' : 'birthday';
+    const emoji = b.type === 'anniversary' ? '💍' : '🎂';
+    const reply = await safeRewrite(`${b.name}'s ${eventName} is on ${b.month} ${b.day}. ${emoji}`);
     await sendWhatsAppMessage(phone, reply);
     return { found: true, count: 1 };
   } else {
     // Multiple matches - return list
-    const list = matches.map(b => `• ${b.name} – ${b.month} ${b.day}`).join('\n');
+    const list = matches.map(b => {
+      const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
+      return `• ${b.name} – ${b.month} ${b.day}${typeLabel}`;
+    }).join('\n');
     const reply = await safeRewrite(`I found these matches:\n\n${list}`);
     await sendWhatsAppMessage(phone, reply);
     return { found: true, count: matches.length };

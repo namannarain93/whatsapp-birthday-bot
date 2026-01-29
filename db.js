@@ -54,8 +54,15 @@ const pool = new Pool({
         name TEXT NOT NULL,
         day INTEGER NOT NULL,
         month TEXT NOT NULL,
-        UNIQUE (phone, name, day, month)
+        type TEXT NOT NULL DEFAULT 'birthday',
+        UNIQUE (phone, name, day, month, type)
       );
+    `);
+    
+    // Add type column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE birthdays 
+      ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'birthday';
     `);
     
     // Create birthday_reminder_log table for tracking sent reminders
@@ -83,16 +90,16 @@ const pool = new Pool({
 })();
 
 // Save birthday
-async function saveBirthday(phone, name, day, month) {
+async function saveBirthday(phone, name, day, month, type = 'birthday') {
   await pool.query(
-    `INSERT INTO birthdays (phone, name, day, month)
-     VALUES ($1, $2, $3, $4)`,
-    [phone, name, day, month]
+    `INSERT INTO birthdays (phone, name, day, month, type)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [phone, name, day, month, type]
   );
 }
 
 // Check duplicate
-async function birthdayExists(phone, name, day, month) {
+async function birthdayExists(phone, name, day, month, type = 'birthday') {
   const res = await pool.query(
     `
     SELECT 1 FROM birthdays
@@ -100,8 +107,9 @@ async function birthdayExists(phone, name, day, month) {
       AND LOWER(name) = LOWER($2)
       AND day = $3
       AND LOWER(month) = LOWER($4)
+      AND type = $5
     `,
-    [phone, name, day, month]
+    [phone, name, day, month, type]
   );
   return res.rowCount > 0;
 }
@@ -110,7 +118,7 @@ async function birthdayExists(phone, name, day, month) {
 async function getBirthdaysForMonth(phone, month) {
   const res = await pool.query(
     `
-    SELECT name, day, month
+    SELECT name, day, month, type
     FROM birthdays
     WHERE phone = $1
       AND (LOWER(month) = LOWER($2) OR LOWER(month) LIKE LOWER($3))
@@ -125,7 +133,7 @@ async function getBirthdaysForMonth(phone, month) {
 async function getAllBirthdays(phone) {
   const res = await pool.query(
     `
-    SELECT name, day, month
+    SELECT name, day, month, type
     FROM birthdays
     WHERE phone = $1
     ORDER BY month, day
@@ -163,7 +171,7 @@ async function updateLastInteraction(phone) {
 async function getBirthdaysForDate(phone, day, month) {
   const res = await pool.query(
     `
-    SELECT name, day, month
+    SELECT name, day, month, type
     FROM birthdays
     WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
     ORDER BY name
@@ -177,7 +185,7 @@ async function getBirthdaysForDate(phone, day, month) {
 async function getBirthdayByName(phone, name) {
   const res = await pool.query(
     `
-    SELECT name, day, month
+    SELECT name, day, month, type
     FROM birthdays
     WHERE phone = $1 AND LOWER(name) LIKE LOWER('%' || $2 || '%')
     ORDER BY name
@@ -192,7 +200,7 @@ async function getBirthdayByName(phone, name) {
 async function getBirthdaysByDate(phone, day, month) {
   const res = await pool.query(
     `
-    SELECT name, day, month
+    SELECT name, day, month, type
     FROM birthdays
     WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
     ORDER BY name
@@ -216,7 +224,7 @@ async function getUpcomingBirthdays(phone, fromDay, fromMonth, toDay, toMonth) {
   // Get all birthdays for this user
   const allBirthdays = await pool.query(
     `
-    SELECT name, day, month
+    SELECT name, day, month, type
     FROM birthdays
     WHERE phone = $1
     ORDER BY month, day
@@ -321,14 +329,14 @@ async function birthdayExistsByName(phone, name) {
 }
 
 // Update birthday
-async function updateBirthday(phone, name, day, month) {
+async function updateBirthday(phone, name, day, month, type = 'birthday') {
   await pool.query(
     `
     UPDATE birthdays
-    SET day = $3, month = $4
+    SET day = $3, month = $4, type = $5
     WHERE phone = $1 AND LOWER(name) = LOWER($2)
     `,
-    [phone, name, day, month]
+    [phone, name, day, month, type]
   );
 }
 

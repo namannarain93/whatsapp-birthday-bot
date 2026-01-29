@@ -510,8 +510,8 @@ async function getUpcomingBirthdaysForUser(phone, days = 7) {
   return upcoming;
 }
 
-// Update last weekly reminder sent timestamp for a user
-async function updateLastWeeklyReminderSent(phone, timestamp) {
+// Update last daily upcoming reminder sent timestamp for a user
+async function updateLastDailyUpcomingReminderSent(phone, timestamp) {
   await pool.query(
     `
     UPDATE users
@@ -547,5 +547,5 @@ module.exports = {
   logReminderSent,
   getAllActiveUsersWithTimezone,
   getUpcomingBirthdaysForUser,
-  updateLastWeeklyReminderSent
+  updateLastDailyUpcomingReminderSent
 };

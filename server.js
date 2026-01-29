@@ -23,7 +23,7 @@ require('./db.js');
 
 // Import reminder schedulers
 const { startReminderScheduler } = require('./reminder.js');
-const { startWeeklyReminderScheduler } = require('./weeklyReminderJob.js');
+const { startDailyUpcomingReminderScheduler } = require('./dailyUpcomingReminderJob.js');
 
 const app = express();
 
@@ -62,6 +62,6 @@ app.listen(PORT, () => {
   console.log('Bot is alive on port', PORT);
   // Start daily reminder scheduler
   startReminderScheduler();
-  // Start weekly reminder scheduler
-  startWeeklyReminderScheduler();
+  // Start daily upcoming reminder scheduler
+  startDailyUpcomingReminderScheduler();
 });

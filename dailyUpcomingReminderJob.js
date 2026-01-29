@@ -4,7 +4,7 @@ const {
   pool,
   getAllActiveUsersWithTimezone,
   getUpcomingBirthdaysForUser,
-  updateLastWeeklyReminderSent
+  updateLastDailyUpcomingReminderSent
 } = require('./db.js');
 const { sendTemplateMessage } = require('./src/services/whatsapp.service');
 
@@ -17,7 +17,7 @@ const TEMPLATE_CONFIG = {
 // Format birthday list for template
 function formatBirthdayList(birthdays) {
   if (birthdays.length === 0) {
-    return 'No birthdays or anniversaries in the next 7 days.';
+    return '';
   }
 
   return birthdays.map(b => {
@@ -30,7 +30,7 @@ function formatBirthdayList(birthdays) {
 }
 
 // Check if reminder was already sent today for a user
-async function hasWeeklyReminderBeenSentToday(phone, today) {
+async function hasDailyUpcomingReminderBeenSentToday(phone, today) {
   const res = await pool.query(
     `
     SELECT last_weekly_reminder_sent
@@ -48,16 +48,16 @@ async function hasWeeklyReminderBeenSentToday(phone, today) {
   return lastSent.isSame(today, 'day');
 }
 
-// Main weekly reminder function
-async function runWeeklyUpcomingBirthdaysJob() {
+// Main daily upcoming reminder function
+async function runDailyUpcomingBirthdaysJob() {
   const executionTimestamp = moment().toISOString();
   
   try {
-    console.log(`[WEEKLY_REMINDER] Starting weekly upcoming birthdays check at ${executionTimestamp}...`);
+    console.log(`[DAILY_UPCOMING_REMINDER] Starting daily upcoming birthdays check at ${executionTimestamp}...`);
     
     // Get all active users
     const users = await getAllActiveUsersWithTimezone();
-    console.log(`[WEEKLY_REMINDER] Found ${users.length} active user(s) to check`);
+    console.log(`[DAILY_UPCOMING_REMINDER] Found ${users.length} active user(s) to check`);
 
     let remindedCount = 0;
     let errorCount = 0;
@@ -69,80 +69,84 @@ async function runWeeklyUpcomingBirthdaysJob() {
         const userTimezone = timezone || 'Asia/Kolkata';
         const now = moment().tz(userTimezone);
         
-        // Check if today is Sunday
-        if (now.day() !== 0) continue;
-        
         // Today at 9:00 AM
         const today = now.clone().startOf('day');
         const todayAt9AM = today.clone().hour(9).minute(0).second(0).millisecond(0);
         
-        if (now.isBefore(todayAt9AM)) continue;
+        if (now.isBefore(todayAt9AM)) {
+          // It's before 9 AM in the user's timezone, skip for now
+          continue;
+        }
         
         // Idempotent check
-        const alreadySent = await hasWeeklyReminderBeenSentToday(phone, today);
+        const alreadySent = await hasDailyUpcomingReminderBeenSentToday(phone, today);
         if (alreadySent) {
-          console.log(`[WEEKLY_REMINDER] ⏭️  Skipping ${phone} - reminder already sent today`);
+          console.log(`[DAILY_UPCOMING_REMINDER] ⏭️  Skipping ${phone} - reminder already sent today`);
           skippedCount++;
           continue;
         }
         
         const upcomingBirthdays = await getUpcomingBirthdaysForUser(phone, 7);
-        let formattedList = formatBirthdayList(upcomingBirthdays);
         
-        // Ensure parameter is never empty
-        if (!formattedList || formattedList.trim().length === 0) {
-          formattedList = 'No birthdays or anniversaries in the next 7 days.';
+        // If no birthdays in the next 7 days, we can choose to skip or send a "no birthdays" message.
+        // Given it's now daily, skipping is probably better than sending an empty list every day.
+        if (upcomingBirthdays.length === 0) {
+          console.log(`[DAILY_UPCOMING_REMINDER] ⏭️  Skipping ${phone} - no upcoming birthdays in next 7 days`);
+          skippedCount++;
+          continue;
         }
+
+        let formattedList = formatBirthdayList(upcomingBirthdays);
         
         // Send template message
         await sendTemplateMessage(phone, TEMPLATE_CONFIG.name, [formattedList], TEMPLATE_CONFIG.language.code);
         
-        // Update last sent timestamp
-        await updateLastWeeklyReminderSent(phone, today.toISOString());
+        // Update last sent timestamp (reusing the column name for now to avoid DB migration)
+        await updateLastDailyUpcomingReminderSent(phone, today.toISOString());
         
-        console.log(`[WEEKLY_REMINDER] ✅ Sent weekly reminder to ${phone} with ${upcomingBirthdays.length} upcoming birthday(s)`);
+        console.log(`[DAILY_UPCOMING_REMINDER] ✅ Sent daily upcoming reminder to ${phone} with ${upcomingBirthdays.length} upcoming birthday(s)`);
         remindedCount++;
         
       } catch (err) {
-        console.error(`[WEEKLY_REMINDER] ❌ Error processing user ${user.phone}:`, err.message);
+        console.error(`[DAILY_UPCOMING_REMINDER] ❌ Error processing user ${user.phone}:`, err.message);
         errorCount++;
       }
     }
     
-    console.log(`[WEEKLY_REMINDER] Completed: ${remindedCount} user(s) reminded, ${skippedCount} skipped, ${errorCount} error(s)`);
+    console.log(`[DAILY_UPCOMING_REMINDER] Completed: ${remindedCount} user(s) reminded, ${skippedCount} skipped, ${errorCount} error(s)`);
     
   } catch (err) {
-    console.error('[WEEKLY_REMINDER] Fatal error:', err);
+    console.error('[DAILY_UPCOMING_REMINDER] Fatal error:', err);
     throw err;
   }
 }
 
 // Scheduler function
-function startWeeklyReminderScheduler() {
-  console.log('[WEEKLY_REMINDER] Starting scheduler - will check every 30 minutes');
+function startDailyUpcomingReminderScheduler() {
+  console.log('[DAILY_UPCOMING_REMINDER] Starting scheduler - will check every 30 minutes');
   
-  runWeeklyUpcomingBirthdaysJob().catch(err => {
-    console.error('[WEEKLY_REMINDER] Initial run failed:', err);
+  runDailyUpcomingBirthdaysJob().catch(err => {
+    console.error('[DAILY_UPCOMING_REMINDER] Initial run failed:', err);
   });
   
   setInterval(() => {
-    runWeeklyUpcomingBirthdaysJob().catch(err => {
-      console.error('[WEEKLY_REMINDER] Scheduled run failed:', err);
+    runDailyUpcomingBirthdaysJob().catch(err => {
+      console.error('[DAILY_UPCOMING_REMINDER] Scheduled run failed:', err);
     });
   }, 30 * 60 * 1000);
 }
 
 // Run if called directly
 if (require.main === module) {
-  runWeeklyUpcomingBirthdaysJob()
+  runDailyUpcomingBirthdaysJob()
     .then(() => {
-      console.log('[WEEKLY_REMINDER] Script completed successfully');
+      console.log('[DAILY_UPCOMING_REMINDER] Script completed successfully');
       process.exit(0);
     })
     .catch((err) => {
-      console.error('[WEEKLY_REMINDER] Script failed:', err);
+      console.error('[DAILY_UPCOMING_REMINDER] Script failed:', err);
       process.exit(1);
     });
 }
 
-module.exports = { runWeeklyUpcomingBirthdaysJob, startWeeklyReminderScheduler };
+module.exports = { runDailyUpcomingBirthdaysJob, startDailyUpcomingReminderScheduler };

@@ -4,6 +4,31 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+const BIRTHDAY_BOT_SCOPED_REPLY_SYSTEM_PROMPT = `
+You are a helpful WhatsApp assistant for a birthday & anniversary reminder bot.
+
+Core behavior:
+- Always start by acknowledging what the user just said in 1 short sentence (friendly, natural, no over-explaining).
+- Then immediately guide the conversation back to birthdays/anniversaries and the bot’s capabilities.
+
+Scope:
+- You ONLY help with: adding/updating/removing birthdays or anniversaries, listing upcoming events, setting reminder times, formatting greetings, confirming details (name/date/timezone/relationship), and onboarding instructions for those features.
+- If the user asks something out of scope, acknowledge it briefly, then redirect to birthdays/anniversaries with a concrete question or action.
+
+Style:
+- Keep replies concise (1–4 short sentences).
+- Ask one clear follow-up question when needed.
+- If missing details, ask for them (name + date + timezone at minimum).
+
+Examples of redirection:
+- If user chats casually (“how are you?”), acknowledge, then ask if they want to add/check an upcoming birthday/anniversary.
+- If user asks for unrelated help, acknowledge + say you can only help with birthdays/anniversaries + offer 1–2 relevant options.
+
+Never:
+- Don’t invent events or dates.
+- Don’t claim you can do things outside the allowed scope.
+`.trim();
+
 async function rewriteForElderlyUser(text) {
   // If there's nothing to rewrite, return as-is
   if (!text) return text;
@@ -58,6 +83,36 @@ You MUST only rewrite what is given.
     // ❌ If OpenAI fails, we NEVER block the user
     console.error("❌ OpenAI failed, using original text:", err.message);
     return text;
+  }
+}
+
+async function generateScopedBirthdayBotReply(userMessage) {
+  const message = (userMessage || "").trim();
+  if (!message) {
+    return "I’m here. Do you want to add a birthday or anniversary, or check what’s coming up?";
+  }
+
+  try {
+    const response = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.3,
+      messages: [
+        {
+          role: "system",
+          content: BIRTHDAY_BOT_SCOPED_REPLY_SYSTEM_PROMPT,
+        },
+        {
+          role: "user",
+          content: message,
+        },
+      ],
+    });
+
+    const content = response.choices?.[0]?.message?.content;
+    return (content || "").trim() || "I can help with birthdays and anniversaries. Do you want to add one or see what’s coming up?";
+  } catch (err) {
+    console.error("❌ OpenAI scoped reply failed:", err.message);
+    return "I can help with birthdays and anniversaries. Do you want to add one or see what’s coming up?";
   }
 }
 
@@ -212,4 +267,4 @@ EXAMPLES:
   }
 }
 
-module.exports = { rewriteForElderlyUser, parseIntentWithLLM };
+module.exports = { rewriteForElderlyUser, generateScopedBirthdayBotReply, parseIntentWithLLM };

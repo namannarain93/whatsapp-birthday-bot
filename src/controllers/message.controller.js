@@ -2,7 +2,7 @@
 
 const { updateLastInteraction } = require('../../db.js');
 const { handleOnboarding, sendHelpMessage, WELCOME_MESSAGE } = require('../services/onboarding.service');
-const { parseIntentWithLLM } = require('../../llm.js');
+const { parseIntentWithLLM, generateScopedBirthdayBotReply } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
 const { markWelcomeSeen } = require('../../db.js');
 const { safeRewrite, sendWhatsAppMessage } = require('../services/whatsapp.service');
@@ -213,14 +213,16 @@ async function handleIncomingMessage(req, res) {
 
       case 'unknown':
       default:
-        // Guardrail: Always reply with inclusive message for unknown intents
-        const fallback = await safeRewrite("I can only help with saving and managing birthdays and anniversaries 😊");
+        // Guardrail: unknown/out-of-scope -> acknowledge + redirect back to birthdays/anniversaries
+        const scoped = await generateScopedBirthdayBotReply(message);
+        const fallback = await safeRewrite(scoped);
         await sendWhatsAppMessage(phone, fallback);
         return res.sendStatus(200);
     }
 
     // If we reach here, something went wrong - send fallback
-    const fallback = await safeRewrite("I can only help with saving and managing birthdays and anniversaries 😊");
+    const scoped = await generateScopedBirthdayBotReply(message);
+    const fallback = await safeRewrite(scoped);
     await sendWhatsAppMessage(phone, fallback);
     return res.sendStatus(200);
 

@@ -6,7 +6,7 @@ const { handleIncomingMessage } = require('../controllers/message.controller');
 
 // GET webhook verification
 router.get('/webhook', (req, res) => {
-  const VERIFY_TOKEN = 'birthday_reminder_verify';
+  const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'birthday_reminder_verify';
 
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];

@@ -1,136 +1,13 @@
 require('dotenv').config();
-const { Pool } = require('pg');
 const moment = require('moment-timezone');
-const fetch = (...args) =>
-  import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
-// Connect to Postgres
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
-
-// Send WhatsApp text message (reused from server.js logic)
-async function sendWhatsAppMessage(to, body) {
-  const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to,
-        type: 'text',
-        text: { body }
-      })
-    });
-
-    const data = await response.json();
-    if (data.error) {
-      throw new Error(data.error.message || 'WhatsApp API error');
-    }
-    return data;
-  } catch (err) {
-    throw err;
-  }
-}
-
-// Send WhatsApp template message (required for users outside 24h window)
-// Meta requires templates when messaging users who haven't interacted in 24+ hours
-async function sendTemplateMessage(to, templateName, parametersArray) {
-  const url = `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to,
-        type: 'template',
-        template: {
-          name: templateName,
-          language: { code: 'en' },
-          components: [
-            {
-              type: 'body',
-              parameters: parametersArray.map(text => ({
-                type: 'text',
-                text: text
-              }))
-            }
-          ]
-        }
-      })
-    });
-
-    const data = await response.json();
-    if (data.error) {
-      throw new Error(data.error.message || 'WhatsApp API error');
-    }
-    return data;
-  } catch (err) {
-    throw err;
-  }
-}
-
-// Get all users with their timezones and last interaction timestamps
-async function getAllUsers() {
-  const res = await pool.query(
-    `
-    SELECT phone, timezone, last_interaction_at
-    FROM users
-    WHERE timezone IS NOT NULL
-    `
-  );
-  return res.rows;
-}
-
-// Get birthdays for a specific day and month (for reminders)
-async function getBirthdaysForDate(phone, day, month) {
-  const res = await pool.query(
-    `
-    SELECT name, day, month, type
-    FROM birthdays
-    WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
-    ORDER BY name
-    `,
-    [phone, day, month]
-  );
-  return res.rows;
-}
-
-// Check if reminder was already sent today for a user
-async function hasReminderBeenSentToday(phone, date, type = 'daily_today') {
-  const res = await pool.query(
-    `
-    SELECT 1 FROM birthday_reminder_log
-    WHERE phone = $1 AND date = $2 AND type = $3
-    LIMIT 1
-    `,
-    [phone, date, type]
-  );
-  return res.rowCount > 0;
-}
-
-// Log that a reminder was sent (idempotent - uses ON CONFLICT)
-async function logReminderSent(phone, date, type = 'daily_today') {
-  await pool.query(
-    `
-    INSERT INTO birthday_reminder_log (phone, date, type)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (phone, date, type) DO NOTHING
-    `,
-    [phone, date, type]
-  );
-}
+const { 
+  pool, 
+  getAllUsers, 
+  getBirthdaysForDate, 
+  hasReminderBeenSentToday, 
+  logReminderSent 
+} = require('./db.js');
+const { sendTemplateMessage } = require('./src/services/whatsapp.service');
 
 // Main reminder function
 async function sendBirthdayReminders() {
@@ -255,4 +132,3 @@ if (require.main === module) {
 }
 
 module.exports = { sendBirthdayReminders, startReminderScheduler };
-

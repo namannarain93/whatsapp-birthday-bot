@@ -1,6 +1,22 @@
 require('dotenv').config();
+
+// Required environment variables validation
+const REQUIRED_ENV_VARS = [
+  'DATABASE_URL',
+  'WHATSAPP_TOKEN',
+  'PHONE_NUMBER_ID',
+  'OPENAI_API_KEY'
+];
+
+const missingVars = REQUIRED_ENV_VARS.filter(v => !process.env[v]);
+if (missingVars.length > 0) {
+  console.error('❌ CRITICAL: Missing required environment variables:', missingVars.join(', '));
+  process.exit(1);
+}
+
 const express = require('express');
 const webhookRoutes = require('./src/routes/webhook.routes');
+const { sendTemplateMessage } = require('./src/services/whatsapp.service');
 
 // Initialize database (import triggers table creation)
 require('./db.js');
@@ -26,45 +42,17 @@ app.use('/', webhookRoutes);
 // Test endpoint for sending template messages
 app.get('/send-test', async (req, res) => {
   try {
-    const token = process.env.WHATSAPP_TOKEN;
-    const phoneNumberId = process.env.PHONE_NUMBER_ID;
-    const to = req.query.to; // e.g. 919819961371
-
-    if (!token || !phoneNumberId || !to) {
-      return res.status(400).json({
-        error: 'Missing WHATSAPP_TOKEN, PHONE_NUMBER_ID, or ?to='
-      });
+    const to = req.query.to;
+    if (!to) {
+      return res.status(400).json({ error: 'Missing ?to=' });
     }
 
-    const fetch = (...args) =>
-      import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
-    const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to,
-        type: 'template',
-        template: {
-          name: 'hello_world',
-          language: { code: 'en_US' }
-        }
-      })
-    });
-
-    const data = await response.json();
-    console.log('SEND TEST RESPONSE:', data);
-
-    res.json(data);
+    const data = await sendTemplateMessage(to, 'hello_world');
+    console.log('SEND TEST SUCCESS:', data);
+    res.json({ success: true, data });
   } catch (err) {
-    console.error('SEND TEST ERROR:', err);
-    res.status(500).send('Failed to send test message');
+    console.error('SEND TEST ERROR:', err.message);
+    res.status(500).json({ error: 'Failed to send test message', details: err.message });
   }
 });
 
@@ -72,8 +60,8 @@ app.get('/send-test', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log('Bot is alive on port', PORT);
-  // Start daily reminder scheduler (runs every 30 minutes, checks for 9am local time)
+  // Start daily reminder scheduler
   startReminderScheduler();
-  // Start weekly reminder scheduler (runs every 30 minutes, checks for Sunday 9am local time)
+  // Start weekly reminder scheduler
   startWeeklyReminderScheduler();
 });

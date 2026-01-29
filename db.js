@@ -523,6 +523,7 @@ async function updateLastWeeklyReminderSent(phone, timestamp) {
 }
 
 module.exports = {
+  pool,
   saveBirthday,
   birthdayExists,
   birthdayExistsByName,

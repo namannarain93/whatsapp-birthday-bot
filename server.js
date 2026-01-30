@@ -39,6 +39,44 @@ app.use(express.json());
 // Register webhook routes
 app.use('/', webhookRoutes);
 
+// Root route for the landing page
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Birthday Bot</title>
+        <style>
+            body {
+                background-color: #FF66CC; /* Rose Pink background */
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                color: white;
+            }
+            .content {
+                text-align: center;
+                font-size: 1.5rem;
+                font-weight: 500;
+                padding: 20px;
+                text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+            }
+        </style>
+    </head>
+    <body>
+        <div class="content">
+            Never forget birthdays or anniversaries again!
+        </div>
+    </body>
+    </html>
+  `);
+});
+
 // Test endpoint for sending template messages
 app.get('/send-test', async (req, res) => {
   try {

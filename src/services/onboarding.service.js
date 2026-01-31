@@ -25,6 +25,7 @@ async function handleOnboarding(phone) {
   if (!exists) {
     // New user: onboard them and send welcome message
     await onboardUser(phone);
+    console.log("MONITOR_EVENT: NEW_REGISTRATION");
     // Skip LLM rewrite for welcome message - it's already properly formatted
     await sendWhatsAppMessage(phone, WELCOME_MESSAGE);
     return true; // User was onboarded

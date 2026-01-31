@@ -12,8 +12,10 @@ const WELCOME_MESSAGE =
   "To search or delete a birthday, just type (example):\n" +
   " → *search papa*\n" +
   " → *delete mom*\n\n" +
-  "To see all birthdays, type:\n" +
+  "To see all birthdays and anniversaries, type:\n" +
   " → *complete list*\n\n" +
+  "In case you get stuck, type:\n" +
+  " → *help*\n\n" +
   "That's it 👍\n\n" +
   " Never miss birthdays or anniversaries again. I've got you covered :)";
 

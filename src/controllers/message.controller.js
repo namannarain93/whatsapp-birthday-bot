@@ -29,8 +29,18 @@ async function handleIncomingMessage(req, res) {
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
-    const messageObj = value?.messages?.[0];
 
+    // 📩 Handle Status Updates (delivered, read, failed)
+    const statusObj = value?.statuses?.[0];
+    if (statusObj) {
+      const id = statusObj.id;
+      const status = statusObj.status;
+      const timestamp = new Date(parseInt(statusObj.timestamp) * 1000).toISOString();
+      console.log(`Message ${id} was ${status} at ${timestamp}`);
+      return res.sendStatus(200);
+    }
+
+    const messageObj = value?.messages?.[0];
     if (!messageObj) return res.sendStatus(200);
 
     const phone = messageObj.from;

@@ -37,6 +37,14 @@ async function handleIncomingMessage(req, res) {
       const status = statusObj.status;
       const timestamp = new Date(parseInt(statusObj.timestamp) * 1000).toISOString();
       console.log(`Message ${id} was ${status} at ${timestamp}`);
+
+      // ❌ Log detailed errors if the message failed
+      if (status === 'failed' && statusObj.errors) {
+        statusObj.errors.forEach(err => {
+          console.error(`❌ Message ${id} failed: [Code ${err.code}] ${err.title}`);
+        });
+      }
+
       return res.sendStatus(200);
     }
 

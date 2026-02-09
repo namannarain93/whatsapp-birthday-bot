@@ -34,13 +34,38 @@ async function sendWhatsAppMessage(to, body) {
     const data = await response.json();
 
     if (!response.ok || data.error) {
-      const error = data.error?.message || data.error?.error_user_msg || `HTTP ${response.status}`;
-      console.error(`[WHATSAPP API ERROR] Status ${response.status}:`, error);
-      throw new Error(`WhatsApp API error: ${error}`);
+      const errorCode = data.error?.code || 'unknown';
+      const errorMessage = data.error?.message || data.error?.error_user_msg || `HTTP ${response.status}`;
+      console.log(JSON.stringify({
+        event: "whatsapp_message_send_failed",
+        to,
+        error_code: errorCode,
+        error_message: errorMessage,
+        timestamp: new Date().toISOString()
+      }));
+      console.error(`[WHATSAPP API ERROR] Status ${response.status}:`, errorMessage);
+      throw new Error(`WhatsApp API error: ${errorMessage}`);
     }
+
+    const wamid = data.messages?.[0]?.id;
+    console.log(JSON.stringify({
+      event: "whatsapp_message_sent",
+      wamid,
+      to,
+      timestamp: new Date().toISOString()
+    }));
 
     return data;
   } catch (err) {
+    if (!err.message.includes('WhatsApp API error')) {
+      console.log(JSON.stringify({
+        event: "whatsapp_message_send_failed",
+        to,
+        error_code: 'internal_error',
+        error_message: err.message,
+        timestamp: new Date().toISOString()
+      }));
+    }
     console.error('[WHATSAPP] Failed to send text message:', err.message);
     throw err;
   }
@@ -82,13 +107,38 @@ async function sendTemplateMessage(to, templateName, parametersArray = [], langu
     const data = await response.json();
 
     if (!response.ok || data.error) {
-      const error = data.error?.message || data.error?.error_user_msg || `HTTP ${response.status}`;
-      console.error(`[WHATSAPP API ERROR] Template ${templateName} failed:`, error);
-      throw new Error(`WhatsApp API error: ${error}`);
+      const errorCode = data.error?.code || 'unknown';
+      const errorMessage = data.error?.message || data.error?.error_user_msg || `HTTP ${response.status}`;
+      console.log(JSON.stringify({
+        event: "whatsapp_message_send_failed",
+        to,
+        error_code: errorCode,
+        error_message: errorMessage,
+        timestamp: new Date().toISOString()
+      }));
+      console.error(`[WHATSAPP API ERROR] Template ${templateName} failed:`, errorMessage);
+      throw new Error(`WhatsApp API error: ${errorMessage}`);
     }
+
+    const wamid = data.messages?.[0]?.id;
+    console.log(JSON.stringify({
+      event: "whatsapp_message_sent",
+      wamid,
+      to,
+      timestamp: new Date().toISOString()
+    }));
 
     return data;
   } catch (err) {
+    if (!err.message.includes('WhatsApp API error')) {
+      console.log(JSON.stringify({
+        event: "whatsapp_message_send_failed",
+        to,
+        error_code: 'internal_error',
+        error_message: err.message,
+        timestamp: new Date().toISOString()
+      }));
+    }
     console.error(`[WHATSAPP] Failed to send template ${templateName}:`, err.message);
     throw err;
   }

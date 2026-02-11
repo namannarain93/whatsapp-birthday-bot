@@ -51,6 +51,8 @@ app.get('/admin', async (req, res) => {
     const breakdown = await metrics.getFailureBreakdown();
     const hourly = await metrics.getHourlyTrendToday();
     const totalUsers = await metrics.getTotalUsersCount();
+    const totalEvents = await metrics.getTotalEventsCount();
+    const eventsTrend = await metrics.getWeeklyEventsTrend();
 
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
@@ -61,6 +63,9 @@ app.get('/admin', async (req, res) => {
     const hourlyLabels = JSON.stringify(['12am', '1am', '2am', '3am', '4am', '5am', '6am', '7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm']);
     const hourlyIncoming = JSON.stringify(hourly.incoming);
     const hourlyOutgoing = JSON.stringify(hourly.outgoing);
+
+    const eventsTrendLabels = JSON.stringify(eventsTrend.map(t => t.week));
+    const eventsTrendData = JSON.stringify(eventsTrend.map(t => t.count));
 
     res.send(`
       <!DOCTYPE html>
@@ -85,12 +90,16 @@ app.get('/admin', async (req, res) => {
       </head>
       <body>
           <div class="container">
-              <h1>Bot Metrics Dashboard</h1>
+              <h1>Birthday Reminder Dashboard</h1>
               
               <div class="cards">
                   <div class="card">
                       <h3>Total Users</h3>
                       <div class="value">${totalUsers}</div>
+                  </div>
+                  <div class="card">
+                      <h3>Stored Birthdays/Annivs</h3>
+                      <div class="value">${totalEvents}</div>
                   </div>
                   <div class="card">
                       <h3>Total All-Time Messages</h3>
@@ -122,6 +131,10 @@ app.get('/admin', async (req, res) => {
                   <div class="chart-container">
                       <h3>Failure Breakdown (by Code)</h3>
                       <canvas id="failureChart"></canvas>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Cumulative Stored Dates (Weekly)</h3>
+                      <canvas id="weeklyEventsChart"></canvas>
                   </div>
               </div>
           </div>
@@ -180,6 +193,29 @@ app.get('/admin', async (req, res) => {
                       }]
                   },
                   options: { responsive: true, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+              });
+
+              new Chart(document.getElementById('weeklyEventsChart'), {
+                  type: 'bar',
+                  data: {
+                      labels: ${eventsTrendLabels},
+                      datasets: [{
+                          label: 'Total Birthdays/Annivs Stored',
+                          data: ${eventsTrendData},
+                          backgroundColor: '#9b59b6',
+                          borderColor: '#8e44ad',
+                          borderWidth: 1
+                      }]
+                  },
+                  options: { 
+                      responsive: true, 
+                      scales: { 
+                          y: { 
+                              beginAtZero: true, 
+                              ticks: { stepSize: 1 } 
+                          } 
+                      } 
+                  }
               });
           </script>
       </body>

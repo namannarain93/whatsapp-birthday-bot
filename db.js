@@ -55,8 +55,15 @@ const pool = new Pool({
         day INTEGER NOT NULL,
         month TEXT NOT NULL,
         type TEXT NOT NULL DEFAULT 'birthday',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (phone, name, day, month, type)
       );
+    `);
+    
+    // Add created_at column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE birthdays 
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
     `);
     
     // Add type column if it doesn't exist (for existing databases)

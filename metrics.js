@@ -125,6 +125,50 @@ async function getTotalUsersCount() {
   }
 }
 
+async function getTotalEventsCount() {
+  try {
+    const result = await pool.query(`SELECT COUNT(*) FROM birthdays`);
+    return parseInt(result.rows[0].count);
+  } catch (err) {
+    console.error('Error in getTotalEventsCount:', err);
+    return 0;
+  }
+}
+
+async function getWeeklyEventsTrend() {
+  try {
+    // Get count of events added per week for the last 8 weeks
+    const result = await pool.query(
+      `SELECT 
+         DATE_TRUNC('week', created_at) AS week, 
+         COUNT(*) as count
+       FROM birthdays 
+       WHERE created_at >= CURRENT_DATE - INTERVAL '8 weeks'
+       GROUP BY week
+       ORDER BY week`
+    );
+
+    // To make it cumulative, we also need the total count before these 8 weeks
+    const initialCountRes = await pool.query(
+      `SELECT COUNT(*) FROM birthdays WHERE created_at < CURRENT_DATE - INTERVAL '8 weeks'`
+    );
+    let cumulativeCount = parseInt(initialCountRes.rows[0].count);
+
+    const trend = result.rows.map(row => {
+      cumulativeCount += parseInt(row.count);
+      return {
+        week: new Date(row.week).toLocaleDateString(),
+        count: cumulativeCount
+      };
+    });
+
+    return trend;
+  } catch (err) {
+    console.error('Error in getWeeklyEventsTrend:', err);
+    return [];
+  }
+}
+
 module.exports = {
   getTotalMessagesAllTime,
   getMessagesToday,
@@ -133,5 +177,7 @@ module.exports = {
   getLast7DayTrend,
   getFailureBreakdown,
   getHourlyTrendToday,
-  getTotalUsersCount
+  getTotalUsersCount,
+  getTotalEventsCount,
+  getWeeklyEventsTrend
 };

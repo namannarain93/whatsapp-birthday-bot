@@ -88,15 +88,12 @@ async function runDailyUpcomingBirthdaysJob() {
         
         const upcomingBirthdays = await getUpcomingBirthdaysForUser(phone, 7);
         
-        // If no birthdays in the next 7 days, we can choose to skip or send a "no birthdays" message.
-        // Given it's now daily, skipping is probably better than sending an empty list every day.
+        let formattedList;
         if (upcomingBirthdays.length === 0) {
-          console.log(`[DAILY_UPCOMING_REMINDER] ⏭️  Skipping ${phone} - no upcoming birthdays in next 7 days`);
-          skippedCount++;
-          continue;
+          formattedList = "No upcoming birthdays or anniversaries in the next 7 days.";
+        } else {
+          formattedList = formatBirthdayList(upcomingBirthdays);
         }
-
-        let formattedList = formatBirthdayList(upcomingBirthdays);
         
         // Send template message
         await sendTemplateMessage(phone, TEMPLATE_CONFIG.name, [formattedList], TEMPLATE_CONFIG.language.code);
@@ -104,7 +101,11 @@ async function runDailyUpcomingBirthdaysJob() {
         // Update last sent timestamp (reusing the column name for now to avoid DB migration)
         await updateLastDailyUpcomingReminderSent(phone, today.toISOString());
         
-        console.log(`[DAILY_UPCOMING_REMINDER] ✅ Sent daily upcoming reminder to ${phone} with ${upcomingBirthdays.length} upcoming birthday(s)`);
+        if (upcomingBirthdays.length === 0) {
+          console.log(`[DAILY_UPCOMING_REMINDER] ✅ Sent daily "no upcoming birthdays" message to ${phone}`);
+        } else {
+          console.log(`[DAILY_UPCOMING_REMINDER] ✅ Sent daily upcoming reminder to ${phone} with ${upcomingBirthdays.length} upcoming birthday(s)`);
+        }
         remindedCount++;
         
       } catch (err) {

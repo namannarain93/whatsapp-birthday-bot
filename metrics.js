@@ -169,6 +169,34 @@ async function getWeeklyEventsTrend() {
   }
 }
 
+async function getRecentMessageStatusTable(limit = 25) {
+  try {
+    const result = await pool.query(
+      `SELECT recipient_phone, template_name, status, error_code, created_at
+       FROM messages
+       WHERE direction = 'outgoing'
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    return result.rows.map(row => {
+      const isTemplate = !!row.template_name;
+      const isSuccess = row.status === 'delivered';
+      return {
+        phone: row.recipient_phone || 'Unknown',
+        messageType: isTemplate ? 'Meta template' : 'Free form',
+        messageStatus: isSuccess ? 'Success' : 'Failure',
+        failureCode: isSuccess ? 'NA' : (row.error_code || 'Unknown'),
+        timestamp: row.created_at ? new Date(row.created_at).toLocaleString() : 'Unknown'
+      };
+    });
+  } catch (err) {
+    console.error('Error in getRecentMessageStatusTable:', err);
+    return [];
+  }
+}
+
 module.exports = {
   getTotalMessagesAllTime,
   getMessagesToday,
@@ -179,5 +207,6 @@ module.exports = {
   getHourlyTrendToday,
   getTotalUsersCount,
   getTotalEventsCount,
-  getWeeklyEventsTrend
+  getWeeklyEventsTrend,
+  getRecentMessageStatusTable
 };

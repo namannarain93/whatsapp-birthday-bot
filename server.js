@@ -53,6 +53,7 @@ app.get('/admin', async (req, res) => {
     const totalUsers = await metrics.getTotalUsersCount();
     const totalEvents = await metrics.getTotalEventsCount();
     const eventsTrend = await metrics.getWeeklyEventsTrend();
+    const recentMessages = await metrics.getRecentMessageStatusTable();
 
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
@@ -66,6 +67,16 @@ app.get('/admin', async (req, res) => {
 
     const eventsTrendLabels = JSON.stringify(eventsTrend.map(t => t.week));
     const eventsTrendData = JSON.stringify(eventsTrend.map(t => t.count));
+
+    const recentMessageRows = recentMessages.map(row => `
+      <tr>
+        <td>${row.phone}</td>
+        <td>${row.messageType}</td>
+        <td>${row.messageStatus}</td>
+        <td>${row.failureCode}</td>
+        <td>${row.timestamp}</td>
+      </tr>
+    `).join('');
 
     res.send(`
       <!DOCTYPE html>
@@ -86,6 +97,10 @@ app.get('/admin', async (req, res) => {
               .card.fail .value { color: #e74c3c; }
               .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
               .chart-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+              table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.95rem; }
+              th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
+              th { background: #fafafa; font-weight: 600; color: #555; }
+              tr:nth-child(even) td { background: #fcfcfc; }
           </style>
       </head>
       <body>
@@ -135,6 +150,23 @@ app.get('/admin', async (req, res) => {
                   <div class="chart-container" style="grid-column: span 2;">
                       <h3>Cumulative Stored Dates (Weekly)</h3>
                       <canvas id="weeklyEventsChart"></canvas>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Last 25 Outgoing Messages</h3>
+                      <table>
+                          <thead>
+                              <tr>
+                                  <th>Phone Number</th>
+                                  <th>Message Type</th>
+                                  <th>Status</th>
+                                  <th>Failure Code</th>
+                                  <th>Timestamp</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              ${recentMessageRows || '<tr><td colspan="5">No outgoing messages yet.</td></tr>'}
+                          </tbody>
+                      </table>
                   </div>
               </div>
           </div>

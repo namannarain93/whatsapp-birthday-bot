@@ -17,6 +17,7 @@ if (missingVars.length > 0) {
 const express = require('express');
 const webhookRoutes = require('./src/routes/webhook.routes');
 const { sendTemplateMessage } = require('./src/services/whatsapp.service');
+const { getAdminMetrics } = require('./db.js');
 
 // Initialize database (import triggers table creation)
 require('./db.js');
@@ -38,6 +39,111 @@ app.use(express.json());
 
 // Register webhook routes
 app.use('/', webhookRoutes);
+
+// Admin dashboard route
+app.get('/admin', async (req, res) => {
+  try {
+    const metrics = await getAdminMetrics();
+    const failureRate = metrics.sentToday > 0 
+      ? ((metrics.failedToday / metrics.sentToday) * 100).toFixed(1) 
+      : 0;
+
+    const trendLabels = JSON.stringify(metrics.trend.map(t => new Date(t.day).toLocaleDateString()));
+    const trendData = JSON.stringify(metrics.trend.map(t => parseInt(t.count)));
+    
+    const failureLabels = JSON.stringify(metrics.failures.map(f => f.error_code || 'Unknown'));
+    const failureData = JSON.stringify(metrics.failures.map(f => parseInt(f.count)));
+
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Birthday Bot Admin</title>
+          <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+          <style>
+              body { font-family: sans-serif; background: #f4f7f6; margin: 0; padding: 20px; color: #333; }
+              .container { max-width: 1000px; margin: 0 auto; }
+              h1 { color: #444; }
+              .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+              .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
+              .card h3 { margin: 0; color: #888; font-size: 0.9rem; text-transform: uppercase; }
+              .card .value { font-size: 2rem; font-weight: bold; margin-top: 10px; color: #222; }
+              .card.fail .value { color: #e74c3c; }
+              .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
+              .chart-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+          </style>
+      </head>
+      <body>
+          <div class="container">
+              <h1>Bot Metrics Dashboard</h1>
+              
+              <div class="cards">
+                  <div class="card">
+                      <h3>Sent Today</h3>
+                      <div class="value">${metrics.sentToday}</div>
+                  </div>
+                  <div class="card fail">
+                      <h3>Failed Today</h3>
+                      <div class="value">${metrics.failedToday}</div>
+                  </div>
+                  <div class="card">
+                      <h3>Failure Rate</h3>
+                      <div class="value">${failureRate}%</div>
+                  </div>
+              </div>
+
+              <div class="charts">
+                  <div class="chart-container">
+                      <h3>7-Day Message Trend</h3>
+                      <canvas id="trendChart"></canvas>
+                  </div>
+                  <div class="chart-container">
+                      <h3>Failure Breakdown (by Code)</h3>
+                      <canvas id="failureChart"></canvas>
+                  </div>
+              </div>
+          </div>
+
+          <script>
+              new Chart(document.getElementById('trendChart'), {
+                  type: 'line',
+                  data: {
+                      labels: ${trendLabels},
+                      datasets: [{
+                          label: 'Messages Sent',
+                          data: ${trendData},
+                          borderColor: '#3498db',
+                          backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                          fill: true,
+                          tension: 0.1
+                      }]
+                  },
+                  options: { responsive: true, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+              });
+
+              new Chart(document.getElementById('failureChart'), {
+                  type: 'bar',
+                  data: {
+                      labels: ${failureLabels},
+                      datasets: [{
+                          label: 'Count',
+                          data: ${failureData},
+                          backgroundColor: '#e74c3c'
+                      }]
+                  },
+                  options: { responsive: true, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+              });
+          </script>
+      </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('Admin page error:', err);
+    res.status(500).send('Error loading admin dashboard');
+  }
+});
 
 // Root route for the landing page
 app.get('/', (req, res) => {

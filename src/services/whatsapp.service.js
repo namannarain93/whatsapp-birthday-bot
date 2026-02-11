@@ -1,6 +1,7 @@
 // WhatsApp messaging service
 
 const { rewriteForElderlyUser } = require('../../llm.js');
+const { saveSentMessage } = require('../../db.js');
 const fetch = (...args) =>
   import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
@@ -54,6 +55,9 @@ async function sendWhatsAppMessage(to, body) {
       to,
       timestamp: new Date().toISOString()
     }));
+
+    // Log to DB for admin metrics
+    await saveSentMessage(wamid, to);
 
     return data;
   } catch (err) {
@@ -127,6 +131,9 @@ async function sendTemplateMessage(to, templateName, parametersArray = [], langu
       to,
       timestamp: new Date().toISOString()
     }));
+
+    // Log to DB for admin metrics
+    await saveSentMessage(wamid, to, templateName);
 
     return data;
   } catch (err) {

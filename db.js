@@ -77,6 +77,20 @@ const pool = new Pool({
       );
     `);
     
+    // Create messages table for admin metrics
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        wamid TEXT UNIQUE,
+        recipient_phone TEXT,
+        status TEXT, -- sent / delivered / failed
+        error_code TEXT,
+        template_name TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    
     // Create index on (phone, date, type) for faster lookups
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_birthday_reminder_log_phone_date_type 
@@ -522,6 +536,68 @@ async function updateLastDailyUpcomingReminderSent(phone, timestamp) {
   );
 }
 
+// Admin Metrics: Save sent message
+async function saveSentMessage(wamid, phone, templateName = null) {
+  if (!wamid) return;
+  await pool.query(
+    `INSERT INTO messages (wamid, recipient_phone, status, template_name)
+     VALUES ($1, $2, 'sent', $3)
+     ON CONFLICT (wamid) DO NOTHING`,
+    [wamid, phone, templateName]
+  );
+}
+
+// Admin Metrics: Update message status from webhook
+async function updateMessageStatus(wamid, status, errorCode = null) {
+  if (!wamid) return;
+  if (status === 'failed') {
+    await pool.query(
+      `UPDATE messages
+       SET status = 'failed', error_code = $1, updated_at = NOW()
+       WHERE wamid = $2`,
+      [errorCode, wamid]
+    );
+  } else if (status === 'delivered') {
+    await pool.query(
+      `UPDATE messages
+       SET status = 'delivered', updated_at = NOW()
+       WHERE wamid = $1`,
+      [wamid]
+    );
+  }
+}
+
+// Admin Metrics: Get dashboard data
+async function getAdminMetrics() {
+  const sentToday = await pool.query(
+    `SELECT COUNT(*) FROM messages WHERE created_at >= CURRENT_DATE`
+  );
+  const failedToday = await pool.query(
+    `SELECT COUNT(*) FROM messages WHERE status = 'failed' AND created_at >= CURRENT_DATE`
+  );
+  const trend = await pool.query(
+    `SELECT DATE(created_at) as day, COUNT(*) 
+     FROM messages
+     WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
+     GROUP BY day
+     ORDER BY day`
+  );
+  const failures = await pool.query(
+    `SELECT error_code, COUNT(*)
+     FROM messages
+     WHERE status = 'failed'
+     GROUP BY error_code
+     ORDER BY COUNT(*) DESC`
+  );
+
+  return {
+    sentToday: parseInt(sentToday.rows[0].count),
+    failedToday: parseInt(failedToday.rows[0].count),
+    trend: trend.rows,
+    failures: failures.rows
+  };
+}
+
 module.exports = {
   pool,
   saveBirthday,
@@ -547,5 +623,8 @@ module.exports = {
   logReminderSent,
   getAllActiveUsersWithTimezone,
   getUpcomingBirthdaysForUser,
-  updateLastDailyUpcomingReminderSent
+  updateLastDailyUpcomingReminderSent,
+  saveSentMessage,
+  updateMessageStatus,
+  getAdminMetrics
 };

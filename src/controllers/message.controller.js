@@ -1,6 +1,6 @@
 // Main message controller - orchestrates all incoming message handling
 
-const { updateLastInteraction } = require('../../db.js');
+const { updateLastInteraction, updateMessageStatus } = require('../../db.js');
 const { handleOnboarding, sendHelpMessage, WELCOME_MESSAGE } = require('../services/onboarding.service');
 const { parseIntentWithLLM, generateScopedBirthdayBotReply } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
@@ -37,6 +37,9 @@ async function handleIncomingMessage(req, res) {
       const status = statusObj.status;
       const timestamp = new Date(parseInt(statusObj.timestamp) * 1000).toISOString();
       console.log(`Message ${id} was ${status} at ${timestamp}`);
+
+      // Update DB for admin metrics
+      await updateMessageStatus(id, status, status === 'failed' && statusObj.errors ? statusObj.errors[0].code : null);
 
       // ❌ Log detailed errors if the message failed
       if (status === 'failed' && statusObj.errors) {

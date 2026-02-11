@@ -52,6 +52,7 @@ app.get('/admin', async (req, res) => {
     const hourly = await metrics.getHourlyTrendToday();
     const totalUsers = await metrics.getTotalUsersCount();
     const totalEvents = await metrics.getTotalEventsCount();
+    const totalAnniversaries = await metrics.getTotalAnniversariesCount();
     const eventsTrend = await metrics.getWeeklyEventsTrend();
     const recentMessages = await metrics.getRecentMessageStatusTable();
 
@@ -115,6 +116,10 @@ app.get('/admin', async (req, res) => {
                   <div class="card">
                       <h3>Stored Birthdays/Annivs</h3>
                       <div class="value">${totalEvents}</div>
+                  </div>
+                  <div class="card">
+                      <h3>Stored Anniversaries</h3>
+                      <div class="value">${totalAnniversaries}</div>
                   </div>
                   <div class="card">
                       <h3>Total All-Time Messages</h3>

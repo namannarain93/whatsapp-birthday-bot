@@ -135,6 +135,18 @@ async function getTotalEventsCount() {
   }
 }
 
+async function getTotalAnniversariesCount() {
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) FROM birthdays WHERE LOWER(type) = 'anniversary'`
+    );
+    return parseInt(result.rows[0].count);
+  } catch (err) {
+    console.error('Error in getTotalAnniversariesCount:', err);
+    return 0;
+  }
+}
+
 async function getWeeklyEventsTrend() {
   try {
     // Get count of events added per week for the last 8 weeks
@@ -207,6 +219,7 @@ module.exports = {
   getHourlyTrendToday,
   getTotalUsersCount,
   getTotalEventsCount,
+  getTotalAnniversariesCount,
   getWeeklyEventsTrend,
   getRecentMessageStatusTable
 };

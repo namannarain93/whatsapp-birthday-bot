@@ -1,6 +1,6 @@
 // Main message controller - orchestrates all incoming message handling
 
-const { updateLastInteraction, updateMessageStatus } = require('../../db.js');
+const { updateLastInteraction, updateMessageStatus, saveReceivedMessage } = require('../../db.js');
 const { handleOnboarding, sendHelpMessage, WELCOME_MESSAGE } = require('../services/onboarding.service');
 const { parseIntentWithLLM, generateScopedBirthdayBotReply } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
@@ -56,6 +56,11 @@ async function handleIncomingMessage(req, res) {
 
     const phone = messageObj.from;
     const message = messageObj.text?.body || '';
+    const wamid = messageObj.id;
+
+    // Log incoming message to DB for admin metrics
+    await saveReceivedMessage(wamid, phone);
+
     const lowerMessage = message.toLowerCase();
 
     // Extract userId and text for Better Stack logging

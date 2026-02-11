@@ -17,7 +17,7 @@ if (missingVars.length > 0) {
 const express = require('express');
 const webhookRoutes = require('./src/routes/webhook.routes');
 const { sendTemplateMessage } = require('./src/services/whatsapp.service');
-const { getAdminMetrics } = require('./db.js');
+const metrics = require('./metrics');
 
 // Initialize database (import triggers table creation)
 require('./db.js');
@@ -43,16 +43,18 @@ app.use('/', webhookRoutes);
 // Admin dashboard route
 app.get('/admin', async (req, res) => {
   try {
-    const metrics = await getAdminMetrics();
-    const failureRate = metrics.sentToday > 0 
-      ? ((metrics.failedToday / metrics.sentToday) * 100).toFixed(1) 
-      : 0;
+    const totalAllTime = await metrics.getTotalMessagesAllTime();
+    const sentToday = await metrics.getMessagesToday();
+    const failedToday = await metrics.getFailedToday();
+    const failureRate = await metrics.getFailureRateToday();
+    const trend = await metrics.getLast7DayTrend();
+    const breakdown = await metrics.getFailureBreakdown();
 
-    const trendLabels = JSON.stringify(metrics.trend.map(t => new Date(t.day).toLocaleDateString()));
-    const trendData = JSON.stringify(metrics.trend.map(t => parseInt(t.count)));
+    const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
+    const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
     
-    const failureLabels = JSON.stringify(metrics.failures.map(f => f.error_code || 'Unknown'));
-    const failureData = JSON.stringify(metrics.failures.map(f => parseInt(f.count)));
+    const failureLabels = JSON.stringify(breakdown.map(f => f.error_code || 'Unknown'));
+    const failureData = JSON.stringify(breakdown.map(f => parseInt(f.count)));
 
     res.send(`
       <!DOCTYPE html>
@@ -66,7 +68,7 @@ app.get('/admin', async (req, res) => {
               body { font-family: sans-serif; background: #f4f7f6; margin: 0; padding: 20px; color: #333; }
               .container { max-width: 1000px; margin: 0 auto; }
               h1 { color: #444; }
-              .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+              .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px; }
               .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
               .card h3 { margin: 0; color: #888; font-size: 0.9rem; text-transform: uppercase; }
               .card .value { font-size: 2rem; font-weight: bold; margin-top: 10px; color: #222; }
@@ -81,12 +83,16 @@ app.get('/admin', async (req, res) => {
               
               <div class="cards">
                   <div class="card">
+                      <h3>Total All-Time</h3>
+                      <div class="value">${totalAllTime}</div>
+                  </div>
+                  <div class="card">
                       <h3>Sent Today</h3>
-                      <div class="value">${metrics.sentToday}</div>
+                      <div class="value">${sentToday}</div>
                   </div>
                   <div class="card fail">
                       <h3>Failed Today</h3>
-                      <div class="value">${metrics.failedToday}</div>
+                      <div class="value">${failedToday}</div>
                   </div>
                   <div class="card">
                       <h3>Failure Rate</h3>
@@ -112,7 +118,7 @@ app.get('/admin', async (req, res) => {
                   data: {
                       labels: ${trendLabels},
                       datasets: [{
-                          label: 'Messages Sent',
+                          label: 'Messages',
                           data: ${trendData},
                           borderColor: '#3498db',
                           backgroundColor: 'rgba(52, 152, 219, 0.1)',

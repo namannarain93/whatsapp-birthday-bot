@@ -83,12 +83,19 @@ const pool = new Pool({
         id SERIAL PRIMARY KEY,
         wamid TEXT UNIQUE,
         recipient_phone TEXT,
-        status TEXT, -- sent / delivered / failed
+        status TEXT, -- sent / delivered / failed / received
         error_code TEXT,
         template_name TEXT,
+        direction TEXT, -- 'incoming' or 'outgoing'
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
+    `);
+    
+    // Add direction column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE messages 
+      ADD COLUMN IF NOT EXISTS direction TEXT;
     `);
     
     // Create index on (phone, date, type) for faster lookups
@@ -540,10 +547,21 @@ async function updateLastDailyUpcomingReminderSent(phone, timestamp) {
 async function saveSentMessage(wamid, phone, templateName = null) {
   if (!wamid) return;
   await pool.query(
-    `INSERT INTO messages (wamid, recipient_phone, status, template_name)
-     VALUES ($1, $2, 'sent', $3)
+    `INSERT INTO messages (wamid, recipient_phone, status, template_name, direction)
+     VALUES ($1, $2, 'sent', $3, 'outgoing')
      ON CONFLICT (wamid) DO NOTHING`,
     [wamid, phone, templateName]
+  );
+}
+
+// Admin Metrics: Save received message
+async function saveReceivedMessage(wamid, phone) {
+  if (!wamid) return;
+  await pool.query(
+    `INSERT INTO messages (wamid, recipient_phone, status, direction)
+     VALUES ($1, $2, 'received', 'incoming')
+     ON CONFLICT (wamid) DO NOTHING`,
+    [wamid, phone]
   );
 }
 
@@ -565,37 +583,6 @@ async function updateMessageStatus(wamid, status, errorCode = null) {
       [wamid]
     );
   }
-}
-
-// Admin Metrics: Get dashboard data
-async function getAdminMetrics() {
-  const sentToday = await pool.query(
-    `SELECT COUNT(*) FROM messages WHERE created_at >= CURRENT_DATE`
-  );
-  const failedToday = await pool.query(
-    `SELECT COUNT(*) FROM messages WHERE status = 'failed' AND created_at >= CURRENT_DATE`
-  );
-  const trend = await pool.query(
-    `SELECT DATE(created_at) as day, COUNT(*) 
-     FROM messages
-     WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
-     GROUP BY day
-     ORDER BY day`
-  );
-  const failures = await pool.query(
-    `SELECT error_code, COUNT(*)
-     FROM messages
-     WHERE status = 'failed'
-     GROUP BY error_code
-     ORDER BY COUNT(*) DESC`
-  );
-
-  return {
-    sentToday: parseInt(sentToday.rows[0].count),
-    failedToday: parseInt(failedToday.rows[0].count),
-    trend: trend.rows,
-    failures: failures.rows
-  };
 }
 
 module.exports = {
@@ -625,6 +612,6 @@ module.exports = {
   getUpcomingBirthdaysForUser,
   updateLastDailyUpcomingReminderSent,
   saveSentMessage,
-  updateMessageStatus,
-  getAdminMetrics
+  saveReceivedMessage,
+  updateMessageStatus
 };

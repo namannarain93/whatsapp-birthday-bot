@@ -200,11 +200,79 @@ async function getRecentMessageStatusTable(limit = 25) {
         messageType: isTemplate ? 'Meta template' : 'Free form',
         messageStatus: isSuccess ? 'Success' : 'Failure',
         failureCode: isSuccess ? 'NA' : (row.error_code || 'Unknown'),
-        timestamp: row.created_at ? new Date(row.created_at).toLocaleString() : 'Unknown'
+        timestamp: row.created_at
+          ? new Date(row.created_at).toLocaleString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              year: 'numeric',
+              month: 'short',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: true
+            })
+          : 'Unknown'
       };
     });
   } catch (err) {
     console.error('Error in getRecentMessageStatusTable:', err);
+    return [];
+  }
+}
+
+async function getUserEventSummaryTable(limit = 25) {
+  try {
+    const result = await pool.query(
+      `
+      WITH all_phones AS (
+        SELECT phone FROM users
+        UNION
+        SELECT phone FROM birthdays
+      ),
+      event_counts AS (
+        SELECT
+          phone,
+          COUNT(*) FILTER (WHERE LOWER(type) = 'birthday') AS birthdays,
+          COUNT(*) FILTER (WHERE LOWER(type) = 'anniversary') AS anniversaries,
+          COUNT(*) AS total_events
+        FROM birthdays
+        GROUP BY phone
+      )
+      SELECT
+        ap.phone,
+        COALESCE(ec.birthdays, 0) AS birthdays,
+        COALESCE(ec.anniversaries, 0) AS anniversaries,
+        COALESCE(ec.total_events, 0) AS total_events,
+        u.last_interaction_at
+      FROM all_phones ap
+      LEFT JOIN event_counts ec ON ec.phone = ap.phone
+      LEFT JOIN users u ON u.phone = ap.phone
+      ORDER BY u.last_interaction_at DESC NULLS LAST, ap.phone
+      LIMIT $1
+      `,
+      [limit]
+    );
+
+    return result.rows.map(row => ({
+      phone: row.phone || 'Unknown',
+      birthdays: parseInt(row.birthdays, 10) || 0,
+      anniversaries: parseInt(row.anniversaries, 10) || 0,
+      totalEvents: parseInt(row.total_events, 10) || 0,
+      lastInteraction: row.last_interaction_at
+        ? new Date(row.last_interaction_at).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          })
+        : 'Unknown'
+    }));
+  } catch (err) {
+    console.error('Error in getUserEventSummaryTable:', err);
     return [];
   }
 }
@@ -221,5 +289,6 @@ module.exports = {
   getTotalEventsCount,
   getTotalAnniversariesCount,
   getWeeklyEventsTrend,
-  getRecentMessageStatusTable
+  getRecentMessageStatusTable,
+  getUserEventSummaryTable
 };

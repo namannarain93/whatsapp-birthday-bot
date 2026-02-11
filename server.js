@@ -55,6 +55,7 @@ app.get('/admin', async (req, res) => {
     const totalAnniversaries = await metrics.getTotalAnniversariesCount();
     const eventsTrend = await metrics.getWeeklyEventsTrend();
     const recentMessages = await metrics.getRecentMessageStatusTable();
+    const userEventSummary = await metrics.getUserEventSummaryTable();
 
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
@@ -76,6 +77,16 @@ app.get('/admin', async (req, res) => {
         <td>${row.messageStatus}</td>
         <td>${row.failureCode}</td>
         <td>${row.timestamp}</td>
+      </tr>
+    `).join('');
+
+    const userEventRows = userEventSummary.map(row => `
+      <tr>
+        <td>${row.phone}</td>
+        <td>${row.birthdays}</td>
+        <td>${row.anniversaries}</td>
+        <td>${row.totalEvents}</td>
+        <td>${row.lastInteraction}</td>
       </tr>
     `).join('');
 
@@ -170,6 +181,23 @@ app.get('/admin', async (req, res) => {
                           </thead>
                           <tbody>
                               ${recentMessageRows || '<tr><td colspan="5">No outgoing messages yet.</td></tr>'}
+                          </tbody>
+                      </table>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Users: Birthdays and Anniversaries (Last 25)</h3>
+                      <table>
+                          <thead>
+                              <tr>
+                                  <th>Phone Number</th>
+                                  <th>Birthdays</th>
+                                  <th>Anniversaries</th>
+                                  <th>Total</th>
+                                  <th>Last Interaction (IST)</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              ${userEventRows || '<tr><td colspan="5">No users found.</td></tr>'}
                           </tbody>
                       </table>
                   </div>

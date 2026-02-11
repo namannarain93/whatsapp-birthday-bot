@@ -49,12 +49,18 @@ app.get('/admin', async (req, res) => {
     const failureRate = await metrics.getFailureRateToday();
     const trend = await metrics.getLast7DayTrend();
     const breakdown = await metrics.getFailureBreakdown();
+    const hourly = await metrics.getHourlyTrendToday();
+    const totalUsers = await metrics.getTotalUsersCount();
 
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
     
     const failureLabels = JSON.stringify(breakdown.map(f => f.error_code || 'Unknown'));
     const failureData = JSON.stringify(breakdown.map(f => parseInt(f.count)));
+
+    const hourlyLabels = JSON.stringify(['12am', '1am', '2am', '3am', '4am', '5am', '6am', '7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm']);
+    const hourlyIncoming = JSON.stringify(hourly.incoming);
+    const hourlyOutgoing = JSON.stringify(hourly.outgoing);
 
     res.send(`
       <!DOCTYPE html>
@@ -83,7 +89,11 @@ app.get('/admin', async (req, res) => {
               
               <div class="cards">
                   <div class="card">
-                      <h3>Total All-Time</h3>
+                      <h3>Total Users</h3>
+                      <div class="value">${totalUsers}</div>
+                  </div>
+                  <div class="card">
+                      <h3>Total All-Time Messages</h3>
                       <div class="value">${totalAllTime}</div>
                   </div>
                   <div class="card">
@@ -101,6 +111,10 @@ app.get('/admin', async (req, res) => {
               </div>
 
               <div class="charts">
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Hourly Activity Today (IST)</h3>
+                      <canvas id="hourlyChart"></canvas>
+                  </div>
                   <div class="chart-container">
                       <h3>7-Day Message Trend</h3>
                       <canvas id="trendChart"></canvas>
@@ -113,6 +127,32 @@ app.get('/admin', async (req, res) => {
           </div>
 
           <script>
+              new Chart(document.getElementById('hourlyChart'), {
+                  type: 'bar',
+                  data: {
+                      labels: ${hourlyLabels},
+                      datasets: [
+                          {
+                              label: 'Incoming (User)',
+                              data: ${hourlyIncoming},
+                              backgroundColor: '#2ecc71'
+                          },
+                          {
+                              label: 'Outgoing (Bot)',
+                              data: ${hourlyOutgoing},
+                              backgroundColor: '#3498db'
+                          }
+                      ]
+                  },
+                  options: { 
+                      responsive: true, 
+                      scales: { 
+                          x: { stacked: true },
+                          y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } 
+                      } 
+                  }
+              });
+
               new Chart(document.getElementById('trendChart'), {
                   type: 'line',
                   data: {

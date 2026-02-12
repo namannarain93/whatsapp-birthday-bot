@@ -59,7 +59,7 @@ async function handleIncomingMessage(req, res) {
     const wamid = messageObj.id;
 
     // Log incoming message to DB for admin metrics
-    await saveReceivedMessage(wamid, phone);
+    await saveReceivedMessage(wamid, phone, message);
 
     const lowerMessage = message.toLowerCase();
 

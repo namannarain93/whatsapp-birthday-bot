@@ -149,32 +149,22 @@ async function getTotalAnniversariesCount() {
 
 async function getWeeklyEventsTrend() {
   try {
-    // Get count of events added per week for the last 8 weeks
     const result = await pool.query(
       `SELECT 
-         DATE_TRUNC('week', created_at) AS week, 
-         COUNT(*) as count
+         DATE_TRUNC('week', created_at) AS week,
+         COUNT(*) FILTER (WHERE LOWER(type) = 'birthday') AS birthdays,
+         COUNT(*) FILTER (WHERE LOWER(type) = 'anniversary') AS anniversaries
        FROM birthdays 
-       WHERE created_at >= CURRENT_DATE - INTERVAL '8 weeks'
+       WHERE created_at >= CURRENT_DATE - INTERVAL '5 weeks'
        GROUP BY week
        ORDER BY week`
     );
 
-    // To make it cumulative, we also need the total count before these 8 weeks
-    const initialCountRes = await pool.query(
-      `SELECT COUNT(*) FROM birthdays WHERE created_at < CURRENT_DATE - INTERVAL '8 weeks'`
-    );
-    let cumulativeCount = parseInt(initialCountRes.rows[0].count);
-
-    const trend = result.rows.map(row => {
-      cumulativeCount += parseInt(row.count);
-      return {
-        week: new Date(row.week).toLocaleDateString(),
-        count: cumulativeCount
-      };
-    });
-
-    return trend;
+    return result.rows.map(row => ({
+      week: new Date(row.week).toLocaleDateString(),
+      birthdays: parseInt(row.birthdays) || 0,
+      anniversaries: parseInt(row.anniversaries) || 0
+    }));
   } catch (err) {
     console.error('Error in getWeeklyEventsTrend:', err);
     return [];
@@ -277,6 +267,108 @@ async function getUserEventSummaryTable(limit = 25) {
   }
 }
 
+async function getRecentIncomingMessages(limit = 25) {
+  try {
+    const result = await pool.query(
+      `SELECT recipient_phone, message_body, created_at
+       FROM messages
+       WHERE direction = 'incoming'
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    return result.rows.map(row => ({
+      phone: row.recipient_phone || 'Unknown',
+      message: row.message_body || '—',
+      timestamp: row.created_at
+        ? new Date(row.created_at).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          })
+        : 'Unknown'
+    }));
+  } catch (err) {
+    console.error('Error in getRecentIncomingMessages:', err);
+    return [];
+  }
+}
+
+async function getAllUsersTable() {
+  try {
+    const result = await pool.query(
+      `SELECT phone, timezone, last_interaction_at, created_at
+       FROM users
+       WHERE created_at >= '2026-01-31'
+       ORDER BY created_at DESC`
+    );
+
+    const istOpts = {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    };
+
+    return result.rows.map(row => ({
+      phone: row.phone || 'Unknown',
+      timezone: row.timezone || 'Unknown',
+      lastInteraction: row.last_interaction_at
+        ? new Date(row.last_interaction_at).toLocaleString('en-IN', istOpts)
+        : 'Never',
+      createdAt: row.created_at
+        ? new Date(row.created_at).toLocaleString('en-IN', istOpts)
+        : 'Unknown'
+    }));
+  } catch (err) {
+    console.error('Error in getAllUsersTable:', err);
+    return [];
+  }
+}
+
+async function getAllEventsTable() {
+  try {
+    const result = await pool.query(
+      `SELECT phone, name, day, month, type, created_at
+       FROM birthdays
+       ORDER BY created_at DESC`
+    );
+
+    return result.rows.map(row => ({
+      phone: row.phone || 'Unknown',
+      name: row.name || 'Unknown',
+      day: row.day,
+      month: row.month,
+      type: row.type || 'birthday',
+      createdAt: row.created_at
+        ? new Date(row.created_at).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          })
+        : 'Unknown'
+    }));
+  } catch (err) {
+    console.error('Error in getAllEventsTable:', err);
+    return [];
+  }
+}
+
 module.exports = {
   getTotalMessagesAllTime,
   getMessagesToday,
@@ -290,5 +382,8 @@ module.exports = {
   getTotalAnniversariesCount,
   getWeeklyEventsTrend,
   getRecentMessageStatusTable,
-  getUserEventSummaryTable
+  getUserEventSummaryTable,
+  getRecentIncomingMessages,
+  getAllUsersTable,
+  getAllEventsTable
 };

@@ -105,6 +105,12 @@ const pool = new Pool({
       ADD COLUMN IF NOT EXISTS direction TEXT;
     `);
     
+    // Add message_body column if it doesn't exist (for incoming message text)
+    await pool.query(`
+      ALTER TABLE messages 
+      ADD COLUMN IF NOT EXISTS message_body TEXT;
+    `);
+    
     // Create index on (phone, date, type) for faster lookups
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_birthday_reminder_log_phone_date_type 
@@ -562,13 +568,13 @@ async function saveSentMessage(wamid, phone, templateName = null) {
 }
 
 // Admin Metrics: Save received message
-async function saveReceivedMessage(wamid, phone) {
+async function saveReceivedMessage(wamid, phone, messageBody = null) {
   if (!wamid) return;
   await pool.query(
-    `INSERT INTO messages (wamid, recipient_phone, status, direction)
-     VALUES ($1, $2, 'received', 'incoming')
+    `INSERT INTO messages (wamid, recipient_phone, status, direction, message_body)
+     VALUES ($1, $2, 'received', 'incoming', $3)
      ON CONFLICT (wamid) DO NOTHING`,
-    [wamid, phone]
+    [wamid, phone, messageBody]
   );
 }
 

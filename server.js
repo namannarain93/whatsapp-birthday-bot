@@ -56,6 +56,9 @@ app.get('/admin', async (req, res) => {
     const eventsTrend = await metrics.getWeeklyEventsTrend();
     const recentMessages = await metrics.getRecentMessageStatusTable();
     const userEventSummary = await metrics.getUserEventSummaryTable();
+    const recentIncoming = await metrics.getRecentIncomingMessages();
+    const allEvents = await metrics.getAllEventsTable();
+    const allUsers = await metrics.getAllUsersTable();
 
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
@@ -68,10 +71,12 @@ app.get('/admin', async (req, res) => {
     const hourlyOutgoing = JSON.stringify(hourly.outgoing);
 
     const eventsTrendLabels = JSON.stringify(eventsTrend.map(t => t.week));
-    const eventsTrendData = JSON.stringify(eventsTrend.map(t => t.count));
+    const eventsTrendBirthdays = JSON.stringify(eventsTrend.map(t => t.birthdays));
+    const eventsTrendAnniversaries = JSON.stringify(eventsTrend.map(t => t.anniversaries));
 
-    const recentMessageRows = recentMessages.map(row => `
+    const recentMessageRows = recentMessages.map((row, i) => `
       <tr>
+        <td>${i + 1}</td>
         <td>${row.phone}</td>
         <td>${row.messageType}</td>
         <td>${row.messageStatus}</td>
@@ -80,13 +85,44 @@ app.get('/admin', async (req, res) => {
       </tr>
     `).join('');
 
-    const userEventRows = userEventSummary.map(row => `
+    const userEventRows = userEventSummary.map((row, i) => `
       <tr>
+        <td>${i + 1}</td>
         <td>${row.phone}</td>
         <td>${row.birthdays}</td>
         <td>${row.anniversaries}</td>
         <td>${row.totalEvents}</td>
         <td>${row.lastInteraction}</td>
+      </tr>
+    `).join('');
+
+    const incomingMessageRows = recentIncoming.map((row, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${row.phone}</td>
+        <td>${row.message}</td>
+        <td>${row.timestamp}</td>
+      </tr>
+    `).join('');
+
+    const allUserRows = allUsers.map((row, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${row.phone}</td>
+        <td>${row.timezone}</td>
+        <td>${row.lastInteraction}</td>
+        <td>${row.createdAt}</td>
+      </tr>
+    `).join('');
+
+    const allEventRows = allEvents.map((row, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${row.phone}</td>
+        <td>${row.name}</td>
+        <td>${row.day} ${row.month}</td>
+        <td>${row.type}</td>
+        <td>${row.createdAt}</td>
       </tr>
     `).join('');
 
@@ -113,6 +149,7 @@ app.get('/admin', async (req, res) => {
               th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
               th { background: #fafafa; font-weight: 600; color: #555; }
               tr:nth-child(even) td { background: #fcfcfc; }
+              .scrollable-table { max-height: 500px; overflow-y: auto; }
           </style>
       </head>
       <body>
@@ -164,7 +201,7 @@ app.get('/admin', async (req, res) => {
                       <canvas id="failureChart"></canvas>
                   </div>
                   <div class="chart-container" style="grid-column: span 2;">
-                      <h3>Cumulative Stored Dates (Weekly)</h3>
+                      <h3>Dates Added Per Week (Last 5 Weeks)</h3>
                       <canvas id="weeklyEventsChart"></canvas>
                   </div>
                   <div class="chart-container" style="grid-column: span 2;">
@@ -172,6 +209,7 @@ app.get('/admin', async (req, res) => {
                       <table>
                           <thead>
                               <tr>
+                                  <th>#</th>
                                   <th>Phone Number</th>
                                   <th>Message Type</th>
                                   <th>Status</th>
@@ -180,7 +218,23 @@ app.get('/admin', async (req, res) => {
                               </tr>
                           </thead>
                           <tbody>
-                              ${recentMessageRows || '<tr><td colspan="5">No outgoing messages yet.</td></tr>'}
+                              ${recentMessageRows || '<tr><td colspan="6">No outgoing messages yet.</td></tr>'}
+                          </tbody>
+                      </table>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Last 25 Incoming Messages</h3>
+                      <table>
+                          <thead>
+                              <tr>
+                                  <th>#</th>
+                                  <th>Phone Number</th>
+                                  <th>Message</th>
+                                  <th>Timestamp (IST)</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              ${incomingMessageRows || '<tr><td colspan="4">No incoming messages yet.</td></tr>'}
                           </tbody>
                       </table>
                   </div>
@@ -189,6 +243,7 @@ app.get('/admin', async (req, res) => {
                       <table>
                           <thead>
                               <tr>
+                                  <th>#</th>
                                   <th>Phone Number</th>
                                   <th>Birthdays</th>
                                   <th>Anniversaries</th>
@@ -197,9 +252,48 @@ app.get('/admin', async (req, res) => {
                               </tr>
                           </thead>
                           <tbody>
-                              ${userEventRows || '<tr><td colspan="5">No users found.</td></tr>'}
+                              ${userEventRows || '<tr><td colspan="6">No users found.</td></tr>'}
                           </tbody>
                       </table>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>All Birthdays & Anniversaries (${allEvents.length} entries)</h3>
+                      <div class="scrollable-table">
+                          <table>
+                              <thead>
+                                  <tr>
+                                      <th>#</th>
+                                      <th>Phone Number</th>
+                                      <th>Name</th>
+                                      <th>Date</th>
+                                      <th>Type</th>
+                                      <th>Added On (IST)</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  ${allEventRows || '<tr><td colspan="6">No entries found.</td></tr>'}
+                              </tbody>
+                          </table>
+                      </div>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>All Users (${allUsers.length} users)</h3>
+                      <div class="scrollable-table">
+                          <table>
+                              <thead>
+                                  <tr>
+                                      <th>#</th>
+                                      <th>Phone Number</th>
+                                      <th>Timezone</th>
+                                      <th>Last Interaction (IST)</th>
+                                      <th>Joined On (IST)</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  ${allUserRows || '<tr><td colspan="5">No users found.</td></tr>'}
+                              </tbody>
+                          </table>
+                      </div>
                   </div>
               </div>
           </div>
@@ -264,21 +358,24 @@ app.get('/admin', async (req, res) => {
                   type: 'bar',
                   data: {
                       labels: ${eventsTrendLabels},
-                      datasets: [{
-                          label: 'Total Birthdays/Annivs Stored',
-                          data: ${eventsTrendData},
-                          backgroundColor: '#9b59b6',
-                          borderColor: '#8e44ad',
-                          borderWidth: 1
-                      }]
+                      datasets: [
+                          {
+                              label: 'Birthdays Added',
+                              data: ${eventsTrendBirthdays},
+                              backgroundColor: '#3498db'
+                          },
+                          {
+                              label: 'Anniversaries Added',
+                              data: ${eventsTrendAnniversaries},
+                              backgroundColor: '#e67e22'
+                          }
+                      ]
                   },
                   options: { 
                       responsive: true, 
                       scales: { 
-                          y: { 
-                              beginAtZero: true, 
-                              ticks: { stepSize: 1 } 
-                          } 
+                          x: { stacked: true },
+                          y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } 
                       } 
                   }
               });

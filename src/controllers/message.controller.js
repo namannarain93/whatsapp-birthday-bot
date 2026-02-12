@@ -1,6 +1,6 @@
 // Main message controller - orchestrates all incoming message handling
 
-const { updateLastInteraction, updateMessageStatus, saveReceivedMessage } = require('../../db.js');
+const { updateLastInteraction, updateMessageStatus, saveReceivedMessage, getUserName, setUserName } = require('../../db.js');
 const { handleOnboarding, sendHelpMessage, WELCOME_MESSAGE } = require('../services/onboarding.service');
 const { parseIntentWithLLM, generateScopedBirthdayBotReply } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
@@ -105,6 +105,31 @@ async function handleIncomingMessage(req, res) {
 
     // 🔥 LLM INTENT PARSING (at the very top, after onboarding and help)
     const parsed = await parseIntentWithLLM(message);
+
+    // Catch self-referential names the LLM might not flag (e.g. "my birthday", "remind me")
+    const selfReferentialNames = ['my', 'me', 'i', 'mine', 'myself', 'user', 'self'];
+    const isSelfReferential = (
+      parsed.name &&
+      selfReferentialNames.includes(parsed.name.toLowerCase().trim())
+    ) || (
+      parsed.needs_clarification &&
+      parsed.clarification_question &&
+      parsed.day && parsed.month
+    );
+
+    if (isSelfReferential) {
+      // Try to use stored name before asking
+      const storedName = await getUserName(phone);
+      if (storedName) {
+        parsed.name = storedName;
+        parsed.needs_clarification = false;
+        parsed.clarification_question = null;
+      } else {
+        parsed.name = null;
+        parsed.needs_clarification = true;
+        parsed.clarification_question = "What name should I save your birthday under?";
+      }
+    }
 
     // Handle clarification requests
     if (parsed.needs_clarification && parsed.clarification_question) {
@@ -232,6 +257,17 @@ async function handleIncomingMessage(req, res) {
         }
         // If no match found, fall through to unknown
         break;
+
+      case 'set_name':
+        if (parsed.name) {
+          await setUserName(phone, parsed.name);
+          const nameConfirmation = await safeRewrite(`Got it! I'll remember your name as ${parsed.name}. 😊`);
+          await sendWhatsAppMessage(phone, nameConfirmation);
+        } else {
+          const askName = await safeRewrite("I didn't catch your name. Could you tell me again?");
+          await sendWhatsAppMessage(phone, askName);
+        }
+        return res.sendStatus(200);
 
       case 'help':
         await sendHelpMessage(phone);

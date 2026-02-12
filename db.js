@@ -46,6 +46,13 @@ const pool = new Pool({
     `);
     console.log('✅ Weekly reminder column ensured');
 
+    // Add name column if it doesn't exist (for storing user's own name)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS name TEXT;
+    `);
+    console.log('✅ User name column ensured');
+
     // Create birthdays table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS birthdays (
@@ -598,6 +605,23 @@ async function updateMessageStatus(wamid, status, errorCode = null) {
   }
 }
 
+// Get user's stored name
+async function getUserName(phone) {
+  const res = await pool.query(
+    `SELECT name FROM users WHERE phone = $1`,
+    [phone]
+  );
+  return res.rows.length > 0 ? res.rows[0].name : null;
+}
+
+// Set user's name
+async function setUserName(phone, name) {
+  await pool.query(
+    `UPDATE users SET name = $1 WHERE phone = $2`,
+    [name, phone]
+  );
+}
+
 module.exports = {
   pool,
   saveBirthday,
@@ -626,5 +650,7 @@ module.exports = {
   updateLastDailyUpcomingReminderSent,
   saveSentMessage,
   saveReceivedMessage,
-  updateMessageStatus
+  updateMessageStatus,
+  getUserName,
+  setUserName
 };

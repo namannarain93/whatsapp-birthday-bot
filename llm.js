@@ -152,6 +152,11 @@ Your ONLY job is to help the user:
 2. DEFAULT: If the user provides a name and date (e.g., "Papa Dec 14"), set "event_type" to "birthday".
 3. ANNIVERSARY: Only set "event_type" to "anniversary" if the user explicitly uses words like "anniversary", "wedding", "marriage", or "anniv".
 
+### SELF-REFERENTIAL NAME RULES:
+1. If the user refers to themselves using pronouns like "my", "me", "I", "mine", "myself" (e.g., "my birthday is on 22nd feb", "remind me of my birthday"), do NOT extract "my", "me", "User", or any placeholder as the name.
+2. Instead, set name = null, needs_clarification = true, and provide a short clarification_question asking what name to save it under. Example: "What name should I save your birthday under?"
+3. This applies to ALL intents (save, update, delete, etc.) where the only name reference is a self-referential pronoun.
+
 You must NOT answer any questions outside of dates.
 If the user asks anything unrelated, respond with intent = unknown.
 
@@ -174,12 +179,17 @@ Supported intents:
 - list_all
 - list_month
 - search
+- set_name
 - help
 - unknown
 
+### SET_NAME RULES:
+1. If the user tells you their name (e.g., "My name is Anik", "I'm Anik", "Call me Anik"), set intent = "set_name" and extract the name.
+2. Set the "name" field to the user's name (e.g., "Anik").
+
 OUTPUT FORMAT (always return this exact structure):
 {
-  "intent": "save | update | rename | delete | list_all | list_month | search | help | unknown",
+  "intent": "save | update | rename | delete | list_all | list_month | search | set_name | help | unknown",
   "event_type": "birthday | anniversary",
   "name": "string or null",
   "new_name": "string or null (only for rename intent)",
@@ -205,7 +215,12 @@ EXAMPLES:
 "search momm" → {"intent":"search","name":null,"day":null,"month":null,"query":"momm","needs_clarification":false,"clarification_question":null}
 "help" → {"intent":"help","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "hi" → {"intent":"unknown","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
-"what is the capital of france" → {"intent":"unknown","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}`.trim(),
+"what is the capital of france" → {"intent":"unknown","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"my birthday is on 22nd feb" → {"intent":"save","event_type":"birthday","name":null,"day":22,"month":"Feb","query":null,"needs_clarification":true,"clarification_question":"What name should I save your birthday under?"}
+"remind me of my birthday on 22nd feb" → {"intent":"save","event_type":"birthday","name":null,"day":22,"month":"Feb","query":null,"needs_clarification":true,"clarification_question":"What name should I save your birthday under?"}
+"My name is Anik" → {"intent":"set_name","event_type":"birthday","name":"Anik","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"I'm Ravi" → {"intent":"set_name","event_type":"birthday","name":"Ravi","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"Call me Priya" → {"intent":"set_name","event_type":"birthday","name":"Priya","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}`.trim(),
         },
         {
           role: 'user',

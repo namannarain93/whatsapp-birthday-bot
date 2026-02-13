@@ -19,8 +19,8 @@ const webhookRoutes = require('./src/routes/webhook.routes');
 const { sendTemplateMessage } = require('./src/services/whatsapp.service');
 const metrics = require('./metrics');
 
-// Initialize database (import triggers table creation)
-require('./db.js');
+// Initialize database
+const { dbReady } = require('./db.js');
 
 // Import reminder schedulers
 const { startReminderScheduler } = require('./reminder.js');
@@ -456,8 +456,10 @@ app.get('/send-test', async (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log('Bot is alive on port', PORT);
+  // Wait for all DB migrations to finish before starting schedulers
+  await dbReady;
   // Start daily reminder scheduler
   startReminderScheduler();
   // Start daily upcoming reminder scheduler

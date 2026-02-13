@@ -5,8 +5,8 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// Create tables on startup
-(async () => {
+// Create tables on startup (exported as dbReady so callers can await it)
+const dbReady = (async () => {
   try {
     // Create users table for tracking welcome state, timezone, and last interaction
     await pool.query(`
@@ -717,6 +717,7 @@ async function setUserName(phone, name) {
 
 module.exports = {
   pool,
+  dbReady,
   saveBirthday,
   birthdayExists,
   birthdayExistsByName,

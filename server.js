@@ -26,6 +26,7 @@ require('./db.js');
 const { startReminderScheduler } = require('./reminder.js');
 const { startDailyUpcomingReminderScheduler } = require('./dailyUpcomingReminderJob.js');
 const { startNewUserFollowupScheduler } = require('./newUserFollowupJob.js');
+const { startOnboardingNudgeScheduler } = require('./onboardingNudgeJob.js');
 
 const app = express();
 
@@ -463,4 +464,6 @@ app.listen(PORT, () => {
   startDailyUpcomingReminderScheduler();
   // Start new-user follow-up scheduler (8 PM nudge within 24h of signup)
   startNewUserFollowupScheduler();
+  // Start onboarding nudge scheduler (5-min nudge for idle new users)
+  startOnboardingNudgeScheduler();
 });

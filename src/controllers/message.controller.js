@@ -1,7 +1,7 @@
 // Main message controller - orchestrates all incoming message handling
 
 const { updateLastInteraction, updateMessageStatus, saveReceivedMessage, getUserName, setUserName } = require('../../db.js');
-const { handleOnboarding, sendHelpMessage, WELCOME_MESSAGE } = require('../services/onboarding.service');
+const { handleOnboarding, isInOnboarding, handleOnboardingResponse, sendHelpMessage } = require('../services/onboarding.service');
 const { parseIntentWithLLM, generateScopedBirthdayBotReply } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
 const { markWelcomeSeen } = require('../../db.js');
@@ -72,6 +72,18 @@ async function handleIncomingMessage(req, res) {
     const wasOnboarded = await handleOnboarding(phone);
     if (wasOnboarded) {
       return res.sendStatus(200);
+    }
+
+    // 🔄 MID-ONBOARDING RESPONSE (process their reply and advance to next step)
+    // Skip if user typed "help" — help should always work even during onboarding
+    if (!lowerMessage.includes('help')) {
+      const inOnboarding = await isInOnboarding(phone);
+      if (inOnboarding) {
+        const handled = await handleOnboardingResponse(phone, message);
+        if (handled) {
+          return res.sendStatus(200);
+        }
+      }
     }
 
     // Multi-line birthday processing (before LLM parsing)

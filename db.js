@@ -53,6 +53,21 @@ const pool = new Pool({
     `);
     console.log('✅ User name column ensured');
 
+    // Add onboarding state columns (for multi-step onboarding flow)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS onboarding_step INTEGER NOT NULL DEFAULT 0;
+    `);
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS onboarding_last_sent_at TIMESTAMP;
+    `);
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS onboarding_nudge_count INTEGER NOT NULL DEFAULT 0;
+    `);
+    console.log('✅ Onboarding state columns ensured');
+
     // Create birthdays table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS birthdays (
@@ -605,6 +620,68 @@ async function updateMessageStatus(wamid, status, errorCode = null) {
   }
 }
 
+// ── Onboarding state helpers ──
+
+// Get the onboarding state for a user
+async function getOnboardingState(phone) {
+  const res = await pool.query(
+    `SELECT onboarding_step, onboarding_last_sent_at, onboarding_nudge_sent
+     FROM users WHERE phone = $1`,
+    [phone]
+  );
+  if (res.rows.length === 0) return null;
+  return res.rows[0];
+}
+
+// Set onboarding step (resets nudge count and updates timestamp)
+async function setOnboardingStep(phone, step) {
+  await pool.query(
+    `UPDATE users
+     SET onboarding_step = $2,
+         onboarding_last_sent_at = NOW(),
+         onboarding_nudge_count = 0
+     WHERE phone = $1`,
+    [phone, step]
+  );
+}
+
+// Mark onboarding as complete (step → 0)
+async function completeOnboarding(phone) {
+  await pool.query(
+    `UPDATE users
+     SET onboarding_step = 0
+     WHERE phone = $1`,
+    [phone]
+  );
+}
+
+// Increment the nudge count for a user (after sending a nudge)
+async function incrementOnboardingNudgeCount(phone) {
+  await pool.query(
+    `UPDATE users SET onboarding_nudge_count = onboarding_nudge_count + 1 WHERE phone = $1`,
+    [phone]
+  );
+}
+
+// Get all mid-onboarding users who need action (nudge or abandon).
+// Timing is always relative to onboarding_last_sent_at (the original step message):
+//   nudge_count 0 + 5 min elapsed  → needs 1st nudge
+//   nudge_count 1 + 15 min elapsed → needs 2nd nudge
+//   nudge_count 2 + 30 min elapsed → needs abandonment
+async function getOnboardingUsersNeedingAction() {
+  const res = await pool.query(
+    `SELECT phone, onboarding_step, onboarding_nudge_count
+     FROM users
+     WHERE onboarding_step > 0
+       AND (
+         (onboarding_nudge_count = 0 AND onboarding_last_sent_at < NOW() - INTERVAL '5 minutes')
+         OR (onboarding_nudge_count = 1 AND onboarding_last_sent_at < NOW() - INTERVAL '15 minutes')
+         OR (onboarding_nudge_count >= 2 AND onboarding_last_sent_at < NOW() - INTERVAL '30 minutes')
+       )`
+  );
+  return res.rows;
+}
+
 // Get new users created within the last 24 hours who haven't received the followup nudge yet
 async function getNewUsersForFollowup() {
   const res = await pool.query(
@@ -669,5 +746,10 @@ module.exports = {
   updateMessageStatus,
   getUserName,
   setUserName,
-  getNewUsersForFollowup
+  getNewUsersForFollowup,
+  getOnboardingState,
+  setOnboardingStep,
+  completeOnboarding,
+  incrementOnboardingNudgeCount,
+  getOnboardingUsersNeedingAction
 };

@@ -1,6 +1,6 @@
 // Main message controller - orchestrates all incoming message handling
 
-const { updateLastInteraction, updateMessageStatus, saveReceivedMessage, getUserName, setUserName, updateMessageIntent } = require('../../db.js');
+const { updateLastInteraction, updateMessageStatus, saveReceivedMessage, getUserName, setUserName, updateMessageIntent, getPendingAction, setPendingAction, clearPendingAction } = require('../../db.js');
 const { handleOnboarding, isInOnboarding, handleOnboardingResponse, sendHelpMessage } = require('../services/onboarding.service');
 const { parseIntentWithLLM, generateScopedBirthdayBotReply } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
@@ -22,6 +22,107 @@ const {
   getCurrentMonthName,
   normalizeMonthToShort
 } = require('../utils/month.utils');
+
+/**
+ * Resume a pending action using the user's follow-up message.
+ * Returns true if the action was handled, false to fall through to normal processing.
+ */
+async function resumePendingAction(phone, message, pending) {
+  const { intent, event_type, missing_field } = pending;
+  const trimmedMessage = message.trim();
+
+  try {
+    switch (intent) {
+      case 'search': {
+        // The user's reply is the search query (e.g. "naman")
+        const query = trimmedMessage;
+        if (!query) return false;
+        
+        const fuzzyResult = await fuzzySearchBirthdayByName(phone, query);
+        if (fuzzyResult.found) {
+          return true;
+        }
+        // No match found — let user know
+        const eventName = event_type === 'anniversary' ? 'anniversary' : 'birthday';
+        const reply = await safeRewrite(`I couldn't find a ${eventName} saved under "${query}". Try a different name or type *complete list* to see all entries.`);
+        await sendWhatsAppMessage(phone, reply);
+        return true;
+      }
+
+      case 'save': {
+        if (missing_field === 'name') {
+          // The user's reply is the name; we already have the date
+          const name = trimmedMessage;
+          if (!name) return false;
+          const result = await saveBirthdayForUser(phone, name, pending.day, pending.month, event_type);
+          if (result.success || result.duplicate) {
+            await markWelcomeSeen(phone);
+          }
+          return true;
+        }
+        if (missing_field === 'date') {
+          // The user's reply should contain a date; parse it
+          const parsed = await parseIntentWithLLM(trimmedMessage);
+          if (parsed.day && parsed.month) {
+            const result = await saveBirthdayForUser(phone, pending.name, parsed.day, parsed.month, event_type);
+            if (result.success || result.duplicate) {
+              await markWelcomeSeen(phone);
+            }
+            return true;
+          }
+          // Could also be a full "Name Date" message; try parsing the whole thing
+          return false; // fall through to normal processing
+        }
+        if (missing_field === 'name_and_date' || missing_field === 'name_or_query') {
+          // User's reply might be a full "Name Date" string; fall through to normal processing
+          return false;
+        }
+        return false;
+      }
+
+      case 'update': {
+        if (missing_field === 'name') {
+          const name = trimmedMessage;
+          if (!name) return false;
+          const result = await updateBirthdayForUser(phone, name, pending.day, pending.month, event_type);
+          return result.success;
+        }
+        if (missing_field === 'date') {
+          const parsed = await parseIntentWithLLM(trimmedMessage);
+          if (parsed.day && parsed.month) {
+            const result = await updateBirthdayForUser(phone, pending.name, parsed.day, parsed.month, event_type);
+            return result.success;
+          }
+          return false;
+        }
+        return false;
+      }
+
+      case 'delete': {
+        const name = trimmedMessage;
+        if (!name) return false;
+        await deleteBirthdayForUser(phone, name, event_type);
+        return true;
+      }
+
+      case 'rename': {
+        if (missing_field === 'new_name' && pending.name) {
+          const newName = trimmedMessage;
+          if (!newName) return false;
+          await renamePersonForUser(phone, pending.name, newName, event_type);
+          return true;
+        }
+        return false;
+      }
+
+      default:
+        return false;
+    }
+  } catch (err) {
+    console.error('[PENDING ACTION] Error resuming:', err.message);
+    return false;
+  }
+}
 
 async function handleIncomingMessage(req, res) {
   try {
@@ -86,6 +187,26 @@ async function handleIncomingMessage(req, res) {
           return res.sendStatus(200);
         }
       }
+    }
+
+    // 🔄 PENDING ACTION RESUMPTION
+    // If the bot previously asked a clarification question, the user's response
+    // should be interpreted in that context rather than parsed from scratch.
+    const pendingAction = await getPendingAction(phone);
+    if (pendingAction && !lowerMessage.includes('help')) {
+      // Clear the pending action immediately so it doesn't loop
+      await clearPendingAction(phone);
+
+      // Check staleness (ignore if older than 10 minutes)
+      const ageMs = Date.now() - new Date(pendingAction.created_at).getTime();
+      if (ageMs < 10 * 60 * 1000) {
+        const handled = await resumePendingAction(phone, message, pendingAction);
+        if (handled) {
+          await updateMessageIntent(wamid, `pending_${pendingAction.intent}`);
+          return res.sendStatus(200);
+        }
+      }
+      // If stale or not handled, fall through to normal processing
     }
 
     // Multi-line birthday processing (before LLM parsing)
@@ -154,8 +275,22 @@ async function handleIncomingMessage(req, res) {
       }
     }
 
-    // Handle clarification requests
+    // Handle clarification requests — store pending action so the user's reply
+    // is interpreted in context rather than parsed from scratch
     if (parsed.needs_clarification && parsed.clarification_question) {
+      await setPendingAction(phone, {
+        intent: parsed.intent,
+        event_type: parsed.event_type || 'birthday',
+        name: parsed.name || null,
+        day: parsed.day || null,
+        month: parsed.month || null,
+        query: parsed.query || null,
+        missing_field: !parsed.name && !parsed.query ? 'name_or_query' :
+                       !parsed.name ? 'name' :
+                       !parsed.query && parsed.intent === 'search' ? 'query' :
+                       (!parsed.day || !parsed.month) ? 'date' : 'unknown',
+        created_at: new Date().toISOString()
+      });
       const reply = await safeRewrite(parsed.clarification_question);
       await sendWhatsAppMessage(phone, reply);
       return res.sendStatus(200);
@@ -168,13 +303,26 @@ async function handleIncomingMessage(req, res) {
         if (!parsed.name || !parsed.day || !parsed.month) {
           const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
           let clarificationMsg;
+          let missingField;
           if (parsed.name && (!parsed.day || !parsed.month)) {
             clarificationMsg = `When is ${parsed.name}'s ${eventName}?`;
+            missingField = 'date';
           } else if (!parsed.name && parsed.day && parsed.month) {
             clarificationMsg = `Whose ${eventName} is on ${parsed.month} ${parsed.day}?`;
+            missingField = 'name';
           } else {
             clarificationMsg = `Whose ${eventName} and which date should I save?`;
+            missingField = 'name_and_date';
           }
+          await setPendingAction(phone, {
+            intent: 'save',
+            event_type: parsed.event_type || 'birthday',
+            name: parsed.name || null,
+            day: parsed.day || null,
+            month: parsed.month || null,
+            missing_field: missingField,
+            created_at: new Date().toISOString()
+          });
           const clarification = await safeRewrite(clarificationMsg);
           await sendWhatsAppMessage(phone, clarification);
           return res.sendStatus(200);
@@ -194,13 +342,26 @@ async function handleIncomingMessage(req, res) {
         if (!parsed.name || !parsed.day || !parsed.month) {
           const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
           let updateClarificationMsg;
+          let updateMissingField;
           if (parsed.name && (!parsed.day || !parsed.month)) {
             updateClarificationMsg = `What's the new date for ${parsed.name}'s ${eventName}?`;
+            updateMissingField = 'date';
           } else if (!parsed.name && parsed.day && parsed.month) {
             updateClarificationMsg = `Whose ${eventName} should I update to ${parsed.month} ${parsed.day}?`;
+            updateMissingField = 'name';
           } else {
             updateClarificationMsg = `Whose ${eventName} should I update and what's the new date?`;
+            updateMissingField = 'name_and_date';
           }
+          await setPendingAction(phone, {
+            intent: 'update',
+            event_type: parsed.event_type || 'birthday',
+            name: parsed.name || null,
+            day: parsed.day || null,
+            month: parsed.month || null,
+            missing_field: updateMissingField,
+            created_at: new Date().toISOString()
+          });
           const clarification = await safeRewrite(updateClarificationMsg);
           await sendWhatsAppMessage(phone, clarification);
           return res.sendStatus(200);
@@ -217,6 +378,14 @@ async function handleIncomingMessage(req, res) {
         // Validate required fields
         if (!parsed.name || !parsed.new_name) {
           const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
+          await setPendingAction(phone, {
+            intent: 'rename',
+            event_type: parsed.event_type || 'birthday',
+            name: parsed.name || null,
+            new_name: parsed.new_name || null,
+            missing_field: !parsed.name ? 'name' : 'new_name',
+            created_at: new Date().toISOString()
+          });
           const clarification = await safeRewrite(`Whose ${eventName} should I rename and what is the new name?`);
           await sendWhatsAppMessage(phone, clarification);
           return res.sendStatus(200);
@@ -279,6 +448,12 @@ async function handleIncomingMessage(req, res) {
       case 'search':
         // Validate query
         if (!parsed.query || parsed.query.trim().length === 0) {
+          await setPendingAction(phone, {
+            intent: 'search',
+            event_type: parsed.event_type || 'birthday',
+            missing_field: 'query',
+            created_at: new Date().toISOString()
+          });
           const clarification = await safeRewrite("What should I search for?");
           await sendWhatsAppMessage(phone, clarification);
           return res.sendStatus(200);

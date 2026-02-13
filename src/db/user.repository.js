@@ -98,6 +98,31 @@ async function setUserName(phone, name) {
   );
 }
 
+// Get pending action for a user (e.g. awaiting clarification response)
+async function getPendingAction(phone) {
+  const res = await pool.query(
+    `SELECT pending_action FROM users WHERE phone = $1`,
+    [phone]
+  );
+  return res.rows.length > 0 ? res.rows[0].pending_action : null;
+}
+
+// Set pending action for a user (store context when bot asks a clarification question)
+async function setPendingAction(phone, action) {
+  await pool.query(
+    `UPDATE users SET pending_action = $1 WHERE phone = $2`,
+    [JSON.stringify(action), phone]
+  );
+}
+
+// Clear pending action for a user (after it's been consumed or expired)
+async function clearPendingAction(phone) {
+  await pool.query(
+    `UPDATE users SET pending_action = NULL WHERE phone = $1`,
+    [phone]
+  );
+}
+
 module.exports = {
   getAllUsers,
   updateLastInteraction,
@@ -108,4 +133,7 @@ module.exports = {
   isFirstTimeUser,
   getUserName,
   setUserName,
+  getPendingAction,
+  setPendingAction,
+  clearPendingAction,
 };

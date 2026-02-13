@@ -63,6 +63,13 @@ const dbReady = (async () => {
     `);
     console.log('✅ Onboarding state columns ensured');
 
+    // Add pending_action column (stores JSON context when bot asks a clarification question)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS pending_action JSONB;
+    `);
+    console.log('✅ Pending action column ensured');
+
     // Create birthdays table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS birthdays (

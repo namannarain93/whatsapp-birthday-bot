@@ -30,8 +30,8 @@ const WELCOME_MESSAGE =
   " → *complete list*\n\n" +
   "In case you get stuck, type:\n" +
   " → *help*\n\n" +
-  "That's it 👍\n\n" +
- 
+  "That's it 👍";
+
 // ── 4-step onboarding messages ──
 
 const ONBOARDING_STEP_1 =

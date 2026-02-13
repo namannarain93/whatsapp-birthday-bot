@@ -1,6 +1,6 @@
 // Main message controller - orchestrates all incoming message handling
 
-const { updateLastInteraction, updateMessageStatus, saveReceivedMessage, getUserName, setUserName } = require('../../db.js');
+const { updateLastInteraction, updateMessageStatus, saveReceivedMessage, getUserName, setUserName, updateMessageIntent } = require('../../db.js');
 const { handleOnboarding, isInOnboarding, handleOnboardingResponse, sendHelpMessage } = require('../services/onboarding.service');
 const { parseIntentWithLLM, generateScopedBirthdayBotReply } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
@@ -71,6 +71,7 @@ async function handleIncomingMessage(req, res) {
     // 0️⃣ FIRST-TIME USER ONBOARDING (check at the very beginning, before any intent parsing)
     const wasOnboarded = await handleOnboarding(phone);
     if (wasOnboarded) {
+      await updateMessageIntent(wamid, 'onboarding_new');
       return res.sendStatus(200);
     }
 
@@ -81,6 +82,7 @@ async function handleIncomingMessage(req, res) {
       if (inOnboarding) {
         const handled = await handleOnboardingResponse(phone, message);
         if (handled) {
+          await updateMessageIntent(wamid, 'onboarding_response');
           return res.sendStatus(200);
         }
       }
@@ -93,17 +95,22 @@ async function handleIncomingMessage(req, res) {
       await markWelcomeSeen(phone);
       const reply = await safeRewrite(multilineResult);
       await sendWhatsAppMessage(phone, reply);
+      await updateMessageIntent(wamid, 'multiline_save');
       return res.sendStatus(200);
     }
 
     // 0️⃣ Explicit help keyword (always available)
     if (lowerMessage.includes('help')) {
       await sendHelpMessage(phone);
+      await updateMessageIntent(wamid, 'help');
       return res.sendStatus(200);
     }
 
     // 🔥 LLM INTENT PARSING (at the very top, after onboarding and help)
     const parsed = await parseIntentWithLLM(message);
+
+    // Log the parsed intent for metrics
+    await updateMessageIntent(wamid, parsed.intent || 'unknown');
 
     // Catch self-referential names the LLM might not flag (e.g. "my birthday", "remind me")
     const selfReferentialNames = ['my', 'me', 'i', 'mine', 'myself', 'user', 'self'];

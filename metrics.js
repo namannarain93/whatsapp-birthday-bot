@@ -393,6 +393,299 @@ async function getAllEventsTable() {
   }
 }
 
+// ── ONBOARDING FUNNEL METRICS ──
+
+// Get count of users at each onboarding step (0 = completed/not started, 1-3 = in progress)
+async function getOnboardingFunnel() {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE onboarding_step = 0 AND has_seen_welcome = true) AS completed,
+        COUNT(*) FILTER (WHERE onboarding_step = 1) AS step_1,
+        COUNT(*) FILTER (WHERE onboarding_step = 2) AS step_2,
+        COUNT(*) FILTER (WHERE onboarding_step = 3) AS step_3
+      FROM users
+      WHERE created_at >= '2026-01-31'
+    `);
+    const row = result.rows[0];
+    return {
+      completed: parseInt(row.completed) || 0,
+      step_1: parseInt(row.step_1) || 0,
+      step_2: parseInt(row.step_2) || 0,
+      step_3: parseInt(row.step_3) || 0
+    };
+  } catch (err) {
+    console.error('Error in getOnboardingFunnel:', err);
+    return { completed: 0, step_1: 0, step_2: 0, step_3: 0 };
+  }
+}
+
+// Onboarding completion rate (% of users who finished all 4 steps)
+async function getOnboardingCompletionRate() {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE onboarding_step = 0 AND has_seen_welcome = true) AS completed
+      FROM users
+      WHERE created_at >= '2026-01-31'
+    `);
+    const row = result.rows[0];
+    const total = parseInt(row.total) || 0;
+    const completed = parseInt(row.completed) || 0;
+    if (total === 0) return 0;
+    return ((completed / total) * 100).toFixed(1);
+  } catch (err) {
+    console.error('Error in getOnboardingCompletionRate:', err);
+    return 0;
+  }
+}
+
+// Distribution of nudge counts across all users
+async function getNudgeDistribution() {
+  try {
+    const result = await pool.query(`
+      SELECT onboarding_nudge_count AS nudges, COUNT(*) AS count
+      FROM users
+      WHERE created_at >= '2026-01-31'
+      GROUP BY onboarding_nudge_count
+      ORDER BY onboarding_nudge_count
+    `);
+    return result.rows.map(row => ({
+      nudges: parseInt(row.nudges),
+      count: parseInt(row.count)
+    }));
+  } catch (err) {
+    console.error('Error in getNudgeDistribution:', err);
+    return [];
+  }
+}
+
+// ── DAU / WAU METRICS ──
+
+// Daily active users (distinct phones that sent an incoming message today)
+async function getDAU() {
+  try {
+    const result = await pool.query(`
+      SELECT COUNT(DISTINCT recipient_phone) AS dau
+      FROM messages
+      WHERE direction = 'incoming'
+        AND created_at >= CURRENT_DATE
+    `);
+    return parseInt(result.rows[0].dau) || 0;
+  } catch (err) {
+    console.error('Error in getDAU:', err);
+    return 0;
+  }
+}
+
+// Weekly active users (distinct phones that sent an incoming message in last 7 days)
+async function getWAU() {
+  try {
+    const result = await pool.query(`
+      SELECT COUNT(DISTINCT recipient_phone) AS wau
+      FROM messages
+      WHERE direction = 'incoming'
+        AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+    `);
+    return parseInt(result.rows[0].wau) || 0;
+  } catch (err) {
+    console.error('Error in getWAU:', err);
+    return 0;
+  }
+}
+
+// DAU trend over the last 30 days
+async function getDAUTrend() {
+  try {
+    const result = await pool.query(`
+      SELECT DATE(created_at) AS day, COUNT(DISTINCT recipient_phone) AS dau
+      FROM messages
+      WHERE direction = 'incoming'
+        AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY day
+      ORDER BY day
+    `);
+    return result.rows.map(row => ({
+      day: row.day,
+      dau: parseInt(row.dau)
+    }));
+  } catch (err) {
+    console.error('Error in getDAUTrend:', err);
+    return [];
+  }
+}
+
+// ── INTENT DISTRIBUTION METRICS ──
+
+// Breakdown of all parsed intents
+async function getIntentDistribution() {
+  try {
+    const result = await pool.query(`
+      SELECT COALESCE(intent, 'untracked') AS intent, COUNT(*) AS count
+      FROM messages
+      WHERE direction = 'incoming'
+      GROUP BY intent
+      ORDER BY count DESC
+    `);
+    return result.rows.map(row => ({
+      intent: row.intent,
+      count: parseInt(row.count)
+    }));
+  } catch (err) {
+    console.error('Error in getIntentDistribution:', err);
+    return [];
+  }
+}
+
+// Percentage of messages that hit the "unknown" fallback
+async function getUnknownIntentRate() {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE intent = 'unknown') AS unknown_count
+      FROM messages
+      WHERE direction = 'incoming'
+        AND intent IS NOT NULL
+    `);
+    const row = result.rows[0];
+    const total = parseInt(row.total) || 0;
+    const unknown = parseInt(row.unknown_count) || 0;
+    if (total === 0) return 0;
+    return ((unknown / total) * 100).toFixed(1);
+  } catch (err) {
+    console.error('Error in getUnknownIntentRate:', err);
+    return 0;
+  }
+}
+
+// Recent messages that were classified as "unknown" intent
+async function getRecentUnknownMessages(limit = 25) {
+  try {
+    const result = await pool.query(
+      `SELECT recipient_phone, message_body, created_at
+       FROM messages
+       WHERE direction = 'incoming' AND intent = 'unknown'
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return result.rows.map(row => ({
+      phone: row.recipient_phone || 'Unknown',
+      message: row.message_body || '—',
+      timestamp: row.created_at
+        ? new Date(row.created_at).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          })
+        : 'Unknown'
+    }));
+  } catch (err) {
+    console.error('Error in getRecentUnknownMessages:', err);
+    return [];
+  }
+}
+
+// ── REMINDER EFFECTIVENESS METRICS ──
+
+// Count of reminder-type messages sent today (daily_today + weekly templates)
+async function getRemindersSentToday() {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE template_name = 'birthday_reminder') AS daily,
+        COUNT(*) FILTER (WHERE template_name = 'weekly_birthday_reminders') AS weekly
+      FROM messages
+      WHERE direction = 'outgoing'
+        AND template_name IN ('birthday_reminder', 'weekly_birthday_reminders')
+        AND created_at >= CURRENT_DATE
+    `);
+    const row = result.rows[0];
+    return {
+      total: parseInt(row.total) || 0,
+      daily: parseInt(row.daily) || 0,
+      weekly: parseInt(row.weekly) || 0
+    };
+  } catch (err) {
+    console.error('Error in getRemindersSentToday:', err);
+    return { total: 0, daily: 0, weekly: 0 };
+  }
+}
+
+// Reminder delivery rate: sent vs delivered for template (reminder) messages
+async function getReminderDeliveryRate() {
+  try {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status = 'delivered') AS delivered,
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed
+      FROM messages
+      WHERE direction = 'outgoing'
+        AND template_name IN ('birthday_reminder', 'weekly_birthday_reminders')
+    `);
+    const row = result.rows[0];
+    const total = parseInt(row.total) || 0;
+    const delivered = parseInt(row.delivered) || 0;
+    const failed = parseInt(row.failed) || 0;
+    return {
+      total,
+      delivered,
+      failed,
+      deliveryRate: total > 0 ? ((delivered / total) * 100).toFixed(1) : '0.0'
+    };
+  } catch (err) {
+    console.error('Error in getReminderDeliveryRate:', err);
+    return { total: 0, delivered: 0, failed: 0, deliveryRate: '0.0' };
+  }
+}
+
+// Post-reminder engagement: users who sent a message within 24h after receiving a reminder
+async function getPostReminderEngagement() {
+  try {
+    const result = await pool.query(`
+      WITH reminders AS (
+        SELECT DISTINCT recipient_phone, DATE(created_at) AS reminder_date
+        FROM messages
+        WHERE direction = 'outgoing'
+          AND template_name IN ('birthday_reminder', 'weekly_birthday_reminders')
+          AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+      ),
+      engaged AS (
+        SELECT DISTINCT r.recipient_phone, r.reminder_date
+        FROM reminders r
+        INNER JOIN messages m
+          ON m.recipient_phone = r.recipient_phone
+          AND m.direction = 'incoming'
+          AND m.created_at >= r.reminder_date
+          AND m.created_at < r.reminder_date + INTERVAL '1 day'
+      )
+      SELECT
+        (SELECT COUNT(*) FROM reminders) AS total_reminder_sends,
+        (SELECT COUNT(*) FROM engaged) AS engaged_sends
+    `);
+    const row = result.rows[0];
+    const total = parseInt(row.total_reminder_sends) || 0;
+    const engaged = parseInt(row.engaged_sends) || 0;
+    return {
+      totalReminderSends: total,
+      engagedSends: engaged,
+      engagementRate: total > 0 ? ((engaged / total) * 100).toFixed(1) : '0.0'
+    };
+  } catch (err) {
+    console.error('Error in getPostReminderEngagement:', err);
+    return { totalReminderSends: 0, engagedSends: 0, engagementRate: '0.0' };
+  }
+}
+
 module.exports = {
   getTotalMessagesAllTime,
   getMessagesToday,
@@ -410,5 +703,21 @@ module.exports = {
   getUserEventSummaryTable,
   getRecentIncomingMessages,
   getAllUsersTable,
-  getAllEventsTable
+  getAllEventsTable,
+  // Onboarding funnel
+  getOnboardingFunnel,
+  getOnboardingCompletionRate,
+  getNudgeDistribution,
+  // DAU / WAU
+  getDAU,
+  getWAU,
+  getDAUTrend,
+  // Intent distribution
+  getIntentDistribution,
+  getUnknownIntentRate,
+  getRecentUnknownMessages,
+  // Reminder effectiveness
+  getRemindersSentToday,
+  getReminderDeliveryRate,
+  getPostReminderEngagement
 };

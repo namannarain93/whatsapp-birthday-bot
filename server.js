@@ -63,6 +63,20 @@ app.get('/admin', async (req, res) => {
     const allEvents = await metrics.getAllEventsTable();
     const allUsers = await metrics.getAllUsersTable();
 
+    // New metrics
+    const onboardingFunnel = await metrics.getOnboardingFunnel();
+    const onboardingCompletionRate = await metrics.getOnboardingCompletionRate();
+    const nudgeDistribution = await metrics.getNudgeDistribution();
+    const dau = await metrics.getDAU();
+    const wau = await metrics.getWAU();
+    const dauTrend = await metrics.getDAUTrend();
+    const intentDistribution = await metrics.getIntentDistribution();
+    const unknownIntentRate = await metrics.getUnknownIntentRate();
+    const recentUnknownMessages = await metrics.getRecentUnknownMessages();
+    const remindersSentToday = await metrics.getRemindersSentToday();
+    const reminderDeliveryRate = await metrics.getReminderDeliveryRate();
+    const postReminderEngagement = await metrics.getPostReminderEngagement();
+
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
     
@@ -76,6 +90,33 @@ app.get('/admin', async (req, res) => {
     const eventsTrendLabels = JSON.stringify(eventsTrend.map(t => t.week));
     const eventsTrendBirthdays = JSON.stringify(eventsTrend.map(t => t.birthdays));
     const eventsTrendAnniversaries = JSON.stringify(eventsTrend.map(t => t.anniversaries));
+
+    // DAU trend chart data
+    const dauTrendLabels = JSON.stringify(dauTrend.map(t => new Date(t.day).toLocaleDateString()));
+    const dauTrendData = JSON.stringify(dauTrend.map(t => t.dau));
+
+    // Intent distribution chart data
+    const intentLabels = JSON.stringify(intentDistribution.map(i => i.intent));
+    const intentData = JSON.stringify(intentDistribution.map(i => i.count));
+
+    // Onboarding funnel chart data
+    const onboardingFunnelLabels = JSON.stringify(['Step 1', 'Step 2', 'Step 3', 'Completed']);
+    const onboardingFunnelData = JSON.stringify([
+      onboardingFunnel.step_1,
+      onboardingFunnel.step_2,
+      onboardingFunnel.step_3,
+      onboardingFunnel.completed
+    ]);
+
+    // Unknown messages table rows
+    const unknownMessageRows = recentUnknownMessages.map((row, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${row.phone}</td>
+        <td>${row.message}</td>
+        <td>${row.timestamp}</td>
+      </tr>
+    `).join('');
 
     const recentMessageRows = recentMessages.map((row, i) => `
       <tr>
@@ -196,6 +237,52 @@ app.get('/admin', async (req, res) => {
                   </div>
               </div>
 
+              <!-- ── ENGAGEMENT & HEALTH ── -->
+              <h2 style="margin-top: 30px; color: #555;">Engagement & Health</h2>
+              <div class="cards">
+                  <div class="card">
+                      <h3>DAU (Today)</h3>
+                      <div class="value">${dau}</div>
+                  </div>
+                  <div class="card">
+                      <h3>WAU (7 Days)</h3>
+                      <div class="value">${wau}</div>
+                  </div>
+                  <div class="card">
+                      <h3>Onboarding Completion</h3>
+                      <div class="value">${onboardingCompletionRate}%</div>
+                      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">Step 1: ${onboardingFunnel.step_1} · Step 2: ${onboardingFunnel.step_2} · Step 3: ${onboardingFunnel.step_3}</div>
+                  </div>
+                  <div class="card${parseFloat(unknownIntentRate) > 20 ? ' fail' : ''}">
+                      <h3>Unknown Intent Rate</h3>
+                      <div class="value">${unknownIntentRate}%</div>
+                  </div>
+              </div>
+
+              <!-- ── REMINDER EFFECTIVENESS ── -->
+              <h2 style="margin-top: 30px; color: #555;">Reminder Effectiveness</h2>
+              <div class="cards">
+                  <div class="card">
+                      <h3>Reminders Sent Today</h3>
+                      <div class="value">${remindersSentToday.total}</div>
+                      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">${remindersSentToday.daily} daily, ${remindersSentToday.weekly} weekly</div>
+                  </div>
+                  <div class="card">
+                      <h3>Reminder Delivery Rate</h3>
+                      <div class="value">${reminderDeliveryRate.deliveryRate}%</div>
+                      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">${reminderDeliveryRate.delivered} delivered / ${reminderDeliveryRate.total} sent</div>
+                  </div>
+                  <div class="card${reminderDeliveryRate.failed > 0 ? ' fail' : ''}">
+                      <h3>Reminders Failed</h3>
+                      <div class="value">${reminderDeliveryRate.failed}</div>
+                  </div>
+                  <div class="card">
+                      <h3>Post-Reminder Engagement</h3>
+                      <div class="value">${postReminderEngagement.engagementRate}%</div>
+                      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">${postReminderEngagement.engagedSends} / ${postReminderEngagement.totalReminderSends} responded within 24h</div>
+                  </div>
+              </div>
+
               <div class="charts">
                   <div class="chart-container" style="grid-column: span 2;">
                       <h3>Hourly Activity Today (IST)</h3>
@@ -212,6 +299,36 @@ app.get('/admin', async (req, res) => {
                   <div class="chart-container" style="grid-column: span 2;">
                       <h3>Dates Added Per Week (Last 5 Weeks)</h3>
                       <canvas id="weeklyEventsChart"></canvas>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>DAU Trend (Last 30 Days)</h3>
+                      <canvas id="dauTrendChart"></canvas>
+                  </div>
+                  <div class="chart-container">
+                      <h3>Onboarding Funnel</h3>
+                      <canvas id="onboardingFunnelChart"></canvas>
+                  </div>
+                  <div class="chart-container">
+                      <h3>Intent Distribution</h3>
+                      <canvas id="intentChart"></canvas>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Unknown Intent Messages (Last 25)</h3>
+                      <div class="scrollable-table">
+                          <table>
+                              <thead>
+                                  <tr>
+                                      <th>#</th>
+                                      <th>Phone Number</th>
+                                      <th>Message</th>
+                                      <th>Timestamp (IST)</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  ${unknownMessageRows || '<tr><td colspan="4">No unknown intent messages yet.</td></tr>'}
+                              </tbody>
+                          </table>
+                      </div>
                   </div>
                   <div class="chart-container" style="grid-column: span 2;">
                       <h3>Last 25 Outgoing Messages</h3>
@@ -387,6 +504,62 @@ app.get('/admin', async (req, res) => {
                           x: { stacked: true },
                           y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } } 
                       } 
+                  }
+              });
+
+              // DAU Trend (30 days)
+              new Chart(document.getElementById('dauTrendChart'), {
+                  type: 'line',
+                  data: {
+                      labels: ${dauTrendLabels},
+                      datasets: [{
+                          label: 'Daily Active Users',
+                          data: ${dauTrendData},
+                          borderColor: '#9b59b6',
+                          backgroundColor: 'rgba(155, 89, 182, 0.1)',
+                          fill: true,
+                          tension: 0.2
+                      }]
+                  },
+                  options: { responsive: true, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+              });
+
+              // Onboarding Funnel
+              new Chart(document.getElementById('onboardingFunnelChart'), {
+                  type: 'bar',
+                  data: {
+                      labels: ${onboardingFunnelLabels},
+                      datasets: [{
+                          label: 'Users',
+                          data: ${onboardingFunnelData},
+                          backgroundColor: ['#e74c3c', '#e67e22', '#f1c40f', '#2ecc71']
+                      }]
+                  },
+                  options: { 
+                      responsive: true, 
+                      indexAxis: 'y',
+                      scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } } },
+                      plugins: { legend: { display: false } }
+                  }
+              });
+
+              // Intent Distribution
+              new Chart(document.getElementById('intentChart'), {
+                  type: 'doughnut',
+                  data: {
+                      labels: ${intentLabels},
+                      datasets: [{
+                          data: ${intentData},
+                          backgroundColor: [
+                              '#3498db', '#2ecc71', '#e74c3c', '#e67e22', '#9b59b6',
+                              '#1abc9c', '#f1c40f', '#34495e', '#95a5a6', '#d35400',
+                              '#c0392b', '#7f8c8d', '#2c3e50', '#16a085'
+                          ]
+                      }]
+                  },
+                  options: { 
+                      responsive: true,
+                      plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } }
                   }
               });
           </script>

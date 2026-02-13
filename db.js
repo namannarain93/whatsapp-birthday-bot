@@ -133,6 +133,13 @@ const dbReady = (async () => {
       ADD COLUMN IF NOT EXISTS message_body TEXT;
     `);
     
+    // Add intent column if it doesn't exist (for tracking parsed intent on incoming messages)
+    await pool.query(`
+      ALTER TABLE messages 
+      ADD COLUMN IF NOT EXISTS intent TEXT;
+    `);
+    console.log('✅ Message intent column ensured');
+    
     // Create index on (phone, date, type) for faster lookups
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_birthday_reminder_log_phone_date_type 
@@ -620,6 +627,15 @@ async function updateMessageStatus(wamid, status, errorCode = null) {
   }
 }
 
+// Update the parsed intent on an incoming message (for metrics)
+async function updateMessageIntent(wamid, intent) {
+  if (!wamid || !intent) return;
+  await pool.query(
+    `UPDATE messages SET intent = $1, updated_at = NOW() WHERE wamid = $2`,
+    [intent, wamid]
+  );
+}
+
 // ── Onboarding state helpers ──
 
 // Get the onboarding state for a user
@@ -752,5 +768,6 @@ module.exports = {
   setOnboardingStep,
   completeOnboarding,
   incrementOnboardingNudgeCount,
-  getOnboardingUsersNeedingAction
+  getOnboardingUsersNeedingAction,
+  updateMessageIntent
 };

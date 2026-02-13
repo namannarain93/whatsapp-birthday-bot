@@ -53,6 +53,7 @@ app.get('/admin', async (req, res) => {
     const totalUsers = await metrics.getTotalUsersCount();
     const totalEvents = await metrics.getTotalEventsCount();
     const totalAnniversaries = await metrics.getTotalAnniversariesCount();
+    const eventsAddedToday = await metrics.getEventsAddedToday();
     const eventsTrend = await metrics.getWeeklyEventsTrend();
     const recentMessages = await metrics.getRecentMessageStatusTable();
     const userEventSummary = await metrics.getUserEventSummaryTable();
@@ -79,6 +80,7 @@ app.get('/admin', async (req, res) => {
         <td>${i + 1}</td>
         <td>${row.phone}</td>
         <td>${row.messageType}</td>
+        <td>${row.templateName}</td>
         <td>${row.messageStatus}</td>
         <td>${row.failureCode}</td>
         <td>${row.timestamp}</td>
@@ -170,6 +172,11 @@ app.get('/admin', async (req, res) => {
                       <div class="value">${totalAnniversaries}</div>
                   </div>
                   <div class="card">
+                      <h3>Events Added Today</h3>
+                      <div class="value">${eventsAddedToday.total}</div>
+                      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">${eventsAddedToday.birthdays} birthdays, ${eventsAddedToday.anniversaries} anniversaries</div>
+                  </div>
+                  <div class="card">
                       <h3>Total All-Time Messages</h3>
                       <div class="value">${totalAllTime}</div>
                   </div>
@@ -212,13 +219,14 @@ app.get('/admin', async (req, res) => {
                                   <th>#</th>
                                   <th>Phone Number</th>
                                   <th>Message Type</th>
+                                  <th>Template Name</th>
                                   <th>Status</th>
                                   <th>Failure Code</th>
                                   <th>Timestamp</th>
                               </tr>
                           </thead>
                           <tbody>
-                              ${recentMessageRows || '<tr><td colspan="6">No outgoing messages yet.</td></tr>'}
+                              ${recentMessageRows || '<tr><td colspan="7">No outgoing messages yet.</td></tr>'}
                           </tbody>
                       </table>
                   </div>

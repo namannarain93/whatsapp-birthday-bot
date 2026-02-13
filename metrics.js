@@ -147,6 +147,29 @@ async function getTotalAnniversariesCount() {
   }
 }
 
+async function getEventsAddedToday() {
+  try {
+    // Count events added since 12:00 AM IST today
+    // IST is UTC+5:30, so 12 AM IST = previous day 6:30 PM UTC
+    const result = await pool.query(
+      `SELECT 
+         COUNT(*) AS total,
+         COUNT(*) FILTER (WHERE LOWER(type) = 'birthday') AS birthdays,
+         COUNT(*) FILTER (WHERE LOWER(type) = 'anniversary') AS anniversaries
+       FROM birthdays
+       WHERE created_at >= (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')`
+    );
+    return {
+      total: parseInt(result.rows[0].total) || 0,
+      birthdays: parseInt(result.rows[0].birthdays) || 0,
+      anniversaries: parseInt(result.rows[0].anniversaries) || 0
+    };
+  } catch (err) {
+    console.error('Error in getEventsAddedToday:', err);
+    return { total: 0, birthdays: 0, anniversaries: 0 };
+  }
+}
+
 async function getWeeklyEventsTrend() {
   try {
     const result = await pool.query(
@@ -188,6 +211,7 @@ async function getRecentMessageStatusTable(limit = 25) {
       return {
         phone: row.recipient_phone || 'Unknown',
         messageType: isTemplate ? 'Meta template' : 'Free form',
+        templateName: row.template_name || '—',
         messageStatus: isSuccess ? 'Success' : 'Failure',
         failureCode: isSuccess ? 'NA' : (row.error_code || 'Unknown'),
         timestamp: row.created_at
@@ -380,6 +404,7 @@ module.exports = {
   getTotalUsersCount,
   getTotalEventsCount,
   getTotalAnniversariesCount,
+  getEventsAddedToday,
   getWeeklyEventsTrend,
   getRecentMessageStatusTable,
   getUserEventSummaryTable,

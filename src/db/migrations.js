@@ -1,0 +1,150 @@
+const { pool } = require('./pool');
+
+// Create tables on startup (exported as dbReady so callers can await it)
+const dbReady = (async () => {
+  try {
+    // Create users table for tracking welcome state, timezone, and last interaction
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        phone TEXT PRIMARY KEY,
+        has_seen_welcome BOOLEAN NOT NULL DEFAULT false,
+        timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+        last_interaction_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    // Add timezone column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata';
+    `);
+    
+    // Add last_interaction_at column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS last_interaction_at TIMESTAMP;
+    `);
+    
+    // Add last_weekly_reminder_sent column if it doesn't exist (for existing databases)
+    // Use DO block for safer migration (works in all PostgreSQL versions)
+    await pool.query(`
+      DO $$ 
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns 
+          WHERE table_name = 'users' AND column_name = 'last_weekly_reminder_sent'
+        ) THEN
+          ALTER TABLE users ADD COLUMN last_weekly_reminder_sent TIMESTAMP;
+        END IF;
+      END $$;
+    `);
+    console.log('✅ Weekly reminder column ensured');
+
+    // Add name column if it doesn't exist (for storing user's own name)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS name TEXT;
+    `);
+    console.log('✅ User name column ensured');
+
+    // Add onboarding state columns (for multi-step onboarding flow)
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS onboarding_step INTEGER NOT NULL DEFAULT 0;
+    `);
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS onboarding_last_sent_at TIMESTAMP;
+    `);
+    await pool.query(`
+      ALTER TABLE users 
+      ADD COLUMN IF NOT EXISTS onboarding_nudge_count INTEGER NOT NULL DEFAULT 0;
+    `);
+    console.log('✅ Onboarding state columns ensured');
+
+    // Create birthdays table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS birthdays (
+        id SERIAL PRIMARY KEY,
+        phone TEXT NOT NULL,
+        name TEXT NOT NULL,
+        day INTEGER NOT NULL,
+        month TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'birthday',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (phone, name, day, month, type)
+      );
+    `);
+    
+    // Add created_at column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE birthdays 
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    `);
+    
+    // Add type column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE birthdays 
+      ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'birthday';
+    `);
+    
+    // Create birthday_reminder_log table for tracking sent reminders
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS birthday_reminder_log (
+        id SERIAL PRIMARY KEY,
+        phone TEXT NOT NULL,
+        date DATE NOT NULL,
+        type TEXT NOT NULL DEFAULT 'daily_today',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (phone, date, type)
+      );
+    `);
+    
+    // Create messages table for admin metrics
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        wamid TEXT UNIQUE,
+        recipient_phone TEXT,
+        status TEXT, -- sent / delivered / failed / received
+        error_code TEXT,
+        template_name TEXT,
+        direction TEXT, -- 'incoming' or 'outgoing'
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    
+    // Add direction column if it doesn't exist (for existing databases)
+    await pool.query(`
+      ALTER TABLE messages 
+      ADD COLUMN IF NOT EXISTS direction TEXT;
+    `);
+    
+    // Add message_body column if it doesn't exist (for incoming message text)
+    await pool.query(`
+      ALTER TABLE messages 
+      ADD COLUMN IF NOT EXISTS message_body TEXT;
+    `);
+    
+    // Add intent column if it doesn't exist (for tracking parsed intent on incoming messages)
+    await pool.query(`
+      ALTER TABLE messages 
+      ADD COLUMN IF NOT EXISTS intent TEXT;
+    `);
+    console.log('✅ Message intent column ensured');
+    
+    // Create index on (phone, date, type) for faster lookups
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_birthday_reminder_log_phone_date_type 
+      ON birthday_reminder_log (phone, date, type);
+    `);
+    
+    console.log('Database tables ready (Postgres)');
+  } catch (err) {
+    console.error('Error creating tables:', err);
+  }
+})();
+
+module.exports = { dbReady };

@@ -605,6 +605,22 @@ async function updateMessageStatus(wamid, status, errorCode = null) {
   }
 }
 
+// Get new users created within the last 24 hours who haven't received the followup nudge yet
+async function getNewUsersForFollowup() {
+  const res = await pool.query(
+    `
+    SELECT u.phone, u.timezone, u.created_at, u.name
+    FROM users u
+    WHERE u.created_at >= NOW() - INTERVAL '24 hours'
+      AND NOT EXISTS (
+        SELECT 1 FROM birthday_reminder_log brl
+        WHERE brl.phone = u.phone AND brl.type = 'new_user_followup'
+      )
+    `
+  );
+  return res.rows;
+}
+
 // Get user's stored name
 async function getUserName(phone) {
   const res = await pool.query(
@@ -652,5 +668,6 @@ module.exports = {
   saveReceivedMessage,
   updateMessageStatus,
   getUserName,
-  setUserName
+  setUserName,
+  getNewUsersForFollowup
 };

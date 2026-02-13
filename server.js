@@ -25,6 +25,7 @@ require('./db.js');
 // Import reminder schedulers
 const { startReminderScheduler } = require('./reminder.js');
 const { startDailyUpcomingReminderScheduler } = require('./dailyUpcomingReminderJob.js');
+const { startNewUserFollowupScheduler } = require('./newUserFollowupJob.js');
 
 const app = express();
 
@@ -460,4 +461,6 @@ app.listen(PORT, () => {
   startReminderScheduler();
   // Start daily upcoming reminder scheduler
   startDailyUpcomingReminderScheduler();
+  // Start new-user follow-up scheduler (8 PM nudge within 24h of signup)
+  startNewUserFollowupScheduler();
 });

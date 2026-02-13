@@ -53,11 +53,11 @@ async function runDailyUpcomingBirthdaysJob() {
   const executionTimestamp = moment().toISOString();
   
   try {
-    console.log(`[DAILY_UPCOMING_REMINDER] Starting daily upcoming birthdays check at ${executionTimestamp}...`);
+    console.log(`[WEEKLY_UPCOMING_REMINDER] Starting weekly (Sunday) upcoming birthdays check at ${executionTimestamp}...`);
     
     // Get all active users
     const users = await getAllActiveUsersWithTimezone();
-    console.log(`[DAILY_UPCOMING_REMINDER] Found ${users.length} active user(s) to check`);
+    console.log(`[WEEKLY_UPCOMING_REMINDER] Found ${users.length} active user(s) to check`);
 
     let remindedCount = 0;
     let errorCount = 0;
@@ -68,6 +68,11 @@ async function runDailyUpcomingBirthdaysJob() {
         const { phone, timezone } = user;
         const userTimezone = timezone || 'Asia/Kolkata';
         const now = moment().tz(userTimezone);
+        
+        // Only send on Sundays (day() === 0 is Sunday in moment.js)
+        if (now.day() !== 0) {
+          continue;
+        }
         
         // Today at 9:00 AM
         const today = now.clone().startOf('day');
@@ -81,7 +86,7 @@ async function runDailyUpcomingBirthdaysJob() {
         // Idempotent check
         const alreadySent = await hasDailyUpcomingReminderBeenSentToday(phone, today);
         if (alreadySent) {
-          console.log(`[DAILY_UPCOMING_REMINDER] ⏭️  Skipping ${phone} - reminder already sent today`);
+          console.log(`[WEEKLY_UPCOMING_REMINDER] ⏭️  Skipping ${phone} - reminder already sent this week`);
           skippedCount++;
           continue;
         }
@@ -102,37 +107,37 @@ async function runDailyUpcomingBirthdaysJob() {
         await updateLastDailyUpcomingReminderSent(phone, today.toISOString());
         
         if (upcomingBirthdays.length === 0) {
-          console.log(`[DAILY_UPCOMING_REMINDER] ✅ Sent daily "no upcoming birthdays" message to ${phone}`);
+          console.log(`[WEEKLY_UPCOMING_REMINDER] ✅ Sent weekly "no upcoming birthdays" message to ${phone}`);
         } else {
-          console.log(`[DAILY_UPCOMING_REMINDER] ✅ Sent daily upcoming reminder to ${phone} with ${upcomingBirthdays.length} upcoming birthday(s)`);
+          console.log(`[WEEKLY_UPCOMING_REMINDER] ✅ Sent weekly upcoming reminder to ${phone} with ${upcomingBirthdays.length} upcoming birthday(s)`);
         }
         remindedCount++;
         
       } catch (err) {
-        console.error(`[DAILY_UPCOMING_REMINDER] ❌ Error processing user ${user.phone}:`, err.message);
+        console.error(`[WEEKLY_UPCOMING_REMINDER] ❌ Error processing user ${user.phone}:`, err.message);
         errorCount++;
       }
     }
     
-    console.log(`[DAILY_UPCOMING_REMINDER] Completed: ${remindedCount} user(s) reminded, ${skippedCount} skipped, ${errorCount} error(s)`);
+    console.log(`[WEEKLY_UPCOMING_REMINDER] Completed: ${remindedCount} user(s) reminded, ${skippedCount} skipped, ${errorCount} error(s)`);
     
   } catch (err) {
-    console.error('[DAILY_UPCOMING_REMINDER] Fatal error:', err);
+    console.error('[WEEKLY_UPCOMING_REMINDER] Fatal error:', err);
     throw err;
   }
 }
 
 // Scheduler function
 function startDailyUpcomingReminderScheduler() {
-  console.log('[DAILY_UPCOMING_REMINDER] Starting scheduler - will check every 30 minutes');
+  console.log('[WEEKLY_UPCOMING_REMINDER] Starting scheduler - will check every 30 minutes (sends on Sundays at 9 AM)');
   
   runDailyUpcomingBirthdaysJob().catch(err => {
-    console.error('[DAILY_UPCOMING_REMINDER] Initial run failed:', err);
+    console.error('[WEEKLY_UPCOMING_REMINDER] Initial run failed:', err);
   });
   
   setInterval(() => {
     runDailyUpcomingBirthdaysJob().catch(err => {
-      console.error('[DAILY_UPCOMING_REMINDER] Scheduled run failed:', err);
+      console.error('[WEEKLY_UPCOMING_REMINDER] Scheduled run failed:', err);
     });
   }, 30 * 60 * 1000);
 }
@@ -141,11 +146,11 @@ function startDailyUpcomingReminderScheduler() {
 if (require.main === module) {
   runDailyUpcomingBirthdaysJob()
     .then(() => {
-      console.log('[DAILY_UPCOMING_REMINDER] Script completed successfully');
+      console.log('[WEEKLY_UPCOMING_REMINDER] Script completed successfully');
       process.exit(0);
     })
     .catch((err) => {
-      console.error('[DAILY_UPCOMING_REMINDER] Script failed:', err);
+      console.error('[WEEKLY_UPCOMING_REMINDER] Script failed:', err);
       process.exit(1);
     });
 }

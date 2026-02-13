@@ -22,7 +22,6 @@ const {
   getCurrentMonthName,
   normalizeMonthToShort
 } = require('../utils/month.utils');
-const { logEvent } = require('../utils/betterstack');
 
 async function handleIncomingMessage(req, res) {
   try {
@@ -62,18 +61,6 @@ async function handleIncomingMessage(req, res) {
     await saveReceivedMessage(wamid, phone, message);
 
     const lowerMessage = message.toLowerCase();
-
-    // Extract userId and text for Better Stack logging
-    const userId = phone || 'unknown';
-    const text = message || '';
-
-    // Log user message to Better Stack
-    await logEvent({
-      event: 'user_message_received',
-      userId,
-      ts: new Date().toISOString(),
-      props: { text }
-    });
 
     console.log('📞 FROM:', phone);
     console.log('💬 MESSAGE:', message);

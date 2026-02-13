@@ -625,7 +625,7 @@ async function updateMessageStatus(wamid, status, errorCode = null) {
 // Get the onboarding state for a user
 async function getOnboardingState(phone) {
   const res = await pool.query(
-    `SELECT onboarding_step, onboarding_last_sent_at, onboarding_nudge_sent
+    `SELECT onboarding_step, onboarding_last_sent_at, onboarding_nudge_count
      FROM users WHERE phone = $1`,
     [phone]
   );

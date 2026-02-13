@@ -107,10 +107,16 @@ async function handleIncomingMessage(req, res) {
 
     // Catch self-referential names the LLM might not flag (e.g. "my birthday", "remind me")
     const selfReferentialNames = ['my', 'me', 'i', 'mine', 'myself', 'user', 'self'];
-    const isSelfReferential = (
+    const isSelfReferentialName = (
       parsed.name &&
       selfReferentialNames.includes(parsed.name.toLowerCase().trim())
-    ) || (
+    );
+    const isSelfReferentialQuery = (
+      parsed.intent === 'search' &&
+      parsed.query &&
+      selfReferentialNames.includes(parsed.query.toLowerCase().trim())
+    );
+    const isSelfReferential = isSelfReferentialName || isSelfReferentialQuery || (
       parsed.needs_clarification &&
       parsed.clarification_question &&
       parsed.day && parsed.month
@@ -120,13 +126,24 @@ async function handleIncomingMessage(req, res) {
       // Try to use stored name before asking
       const storedName = await getUserName(phone);
       if (storedName) {
-        parsed.name = storedName;
+        if (isSelfReferentialQuery) {
+          parsed.query = storedName;
+        } else {
+          parsed.name = storedName;
+        }
         parsed.needs_clarification = false;
         parsed.clarification_question = null;
       } else {
-        parsed.name = null;
-        parsed.needs_clarification = true;
-        parsed.clarification_question = "What name should I save your birthday under?";
+        const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
+        if (parsed.intent === 'search' || isSelfReferentialQuery) {
+          parsed.query = null;
+          parsed.needs_clarification = true;
+          parsed.clarification_question = `What name is your ${eventName} saved under?`;
+        } else {
+          parsed.name = null;
+          parsed.needs_clarification = true;
+          parsed.clarification_question = `What name should I save your ${eventName} under?`;
+        }
       }
     }
 
@@ -142,7 +159,16 @@ async function handleIncomingMessage(req, res) {
       case 'save':
         // Validate required fields
         if (!parsed.name || !parsed.day || !parsed.month) {
-          const clarification = await safeRewrite("Whose birthday and which date should I save?");
+          const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
+          let clarificationMsg;
+          if (parsed.name && (!parsed.day || !parsed.month)) {
+            clarificationMsg = `When is ${parsed.name}'s ${eventName}?`;
+          } else if (!parsed.name && parsed.day && parsed.month) {
+            clarificationMsg = `Whose ${eventName} is on ${parsed.month} ${parsed.day}?`;
+          } else {
+            clarificationMsg = `Whose ${eventName} and which date should I save?`;
+          }
+          const clarification = await safeRewrite(clarificationMsg);
           await sendWhatsAppMessage(phone, clarification);
           return res.sendStatus(200);
         }
@@ -159,7 +185,16 @@ async function handleIncomingMessage(req, res) {
       case 'update':
         // Validate required fields
         if (!parsed.name || !parsed.day || !parsed.month) {
-          const clarification = await safeRewrite("Whose birthday should I update and what's the new date?");
+          const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
+          let updateClarificationMsg;
+          if (parsed.name && (!parsed.day || !parsed.month)) {
+            updateClarificationMsg = `What's the new date for ${parsed.name}'s ${eventName}?`;
+          } else if (!parsed.name && parsed.day && parsed.month) {
+            updateClarificationMsg = `Whose ${eventName} should I update to ${parsed.month} ${parsed.day}?`;
+          } else {
+            updateClarificationMsg = `Whose ${eventName} should I update and what's the new date?`;
+          }
+          const clarification = await safeRewrite(updateClarificationMsg);
           await sendWhatsAppMessage(phone, clarification);
           return res.sendStatus(200);
         }

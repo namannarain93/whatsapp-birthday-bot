@@ -164,9 +164,21 @@ Always respond in strict JSON.
 Never include explanations.
 Never include text outside JSON.
 
-If the user's message is ambiguous, set:
-needs_clarification = true
-and provide a short clarification_question.
+### CLARIFICATION RULES (IMPORTANT):
+1. If the user's message is ambiguous, set needs_clarification = true and provide a short clarification_question.
+2. If the user provides a name/event but NO date, set intent = "save" (or "update"), keep the name and event_type, set day = null, month = null, needs_clarification = true, and ask for the date. Example: "When is Rohit and Shaanu's anniversary?"
+3. If the user provides a date but NO name, set needs_clarification = true and ask for the name.
+4. If the user mentions MULTIPLE separate people for a birthday in one message (e.g., "birthday of Aakriti and Aparanta"), treat them as sharing the same date, combine them into ONE name field joined by " and " (e.g., "Aakriti and Aparanta"). The system will handle splitting them later.
+5. Understand common slang/abbreviations: "nd" = "and", "bday" = "birthday", "anniv" = "anniversary".
+
+### FLEXIBLE INPUT RULES:
+1. Users may write dates and names in ANY order. All of these mean the same thing:
+   - "Rajan 1st March" (name first)
+   - "1st of March birthday of Rajan" (date first)
+   - "birthday of Rajan on 1st March" (event-name-date)
+   - "March 1 Rajan" (month-day-name)
+2. Always extract the name, day, and month regardless of word order.
+3. Filler words like "birthday of", "bday of", "of", "on", "is on" should be ignored when extracting name and date.
 
 If the user provides a name that contains numbers, treat the full string as the name.
 Do NOT assume numbers are dates unless clearly associated with a month or date word.
@@ -182,6 +194,11 @@ Supported intents:
 - set_name
 - help
 - unknown
+
+### SEARCH / LOOKUP RULES:
+1. If the user asks "when is X's birthday?", "what date is X's bday?", "do you have X's birthday?", or any question asking to look up a person's birthday or anniversary, set intent = "search" and query = the person's name.
+2. Strip possessives ('s) and filler words ("birthday", "bday", "anniversary") from the query — only keep the person's name.
+3. If the user asks about their OWN birthday using self-referential words ("what is my birthday?", "when is my bday?", "do you have my birthday?"), set intent = "search", query = null, needs_clarification = true, and clarification_question = "What name is your birthday saved under?"
 
 ### SET_NAME RULES:
 1. If the user tells you their name (e.g., "My name is Anik", "I'm Anik", "Call me Anik"), set intent = "set_name" and extract the name.
@@ -220,7 +237,19 @@ EXAMPLES:
 "remind me of my birthday on 22nd feb" → {"intent":"save","event_type":"birthday","name":null,"day":22,"month":"Feb","query":null,"needs_clarification":true,"clarification_question":"What name should I save your birthday under?"}
 "My name is Anik" → {"intent":"set_name","event_type":"birthday","name":"Anik","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "I'm Ravi" → {"intent":"set_name","event_type":"birthday","name":"Ravi","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
-"Call me Priya" → {"intent":"set_name","event_type":"birthday","name":"Priya","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}`.trim(),
+"Call me Priya" → {"intent":"set_name","event_type":"birthday","name":"Priya","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"1st of March birthday of Rajan" → {"intent":"save","event_type":"birthday","name":"Rajan","day":1,"month":"Mar","query":null,"needs_clarification":false,"clarification_question":null}
+"birthday of Aakriti on 28th Feb" → {"intent":"save","event_type":"birthday","name":"Aakriti","day":28,"month":"Feb","query":null,"needs_clarification":false,"clarification_question":null}
+"28th Feb birthday of Aakriti nd Aparanta" → {"intent":"save","event_type":"birthday","name":"Aakriti and Aparanta","day":28,"month":"Feb","query":null,"needs_clarification":false,"clarification_question":null}
+"Anniversary of Rohit nd Shaanu" → {"intent":"save","event_type":"anniversary","name":"Rohit and Shaanu","day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"When is Rohit and Shaanu's anniversary?"}
+"bday of Neha 5 April" → {"intent":"save","event_type":"birthday","name":"Neha","day":5,"month":"Apr","query":null,"needs_clarification":false,"clarification_question":null}
+"Mama ka bday" → {"intent":"save","event_type":"birthday","name":"Mama","day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"When is Mama's birthday?"}
+"save anniversary Ritu nd Mohan 15 June" → {"intent":"save","event_type":"anniversary","name":"Ritu and Mohan","day":15,"month":"Jun","query":null,"needs_clarification":false,"clarification_question":null}
+"when is sankalp's birthday?" → {"intent":"search","event_type":"birthday","name":null,"day":null,"month":null,"query":"Sankalp","needs_clarification":false,"clarification_question":null}
+"when is papa's bday?" → {"intent":"search","event_type":"birthday","name":null,"day":null,"month":null,"query":"Papa","needs_clarification":false,"clarification_question":null}
+"do you have Rohit's anniversary?" → {"intent":"search","event_type":"anniversary","name":null,"day":null,"month":null,"query":"Rohit","needs_clarification":false,"clarification_question":null}
+"what is my birthday?" → {"intent":"search","event_type":"birthday","name":null,"day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"What name is your birthday saved under?"}
+"when is my anniversary?" → {"intent":"search","event_type":"anniversary","name":null,"day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"What name is your anniversary saved under?"}`.trim(),
         },
         {
           role: 'user',

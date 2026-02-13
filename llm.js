@@ -311,4 +311,56 @@ EXAMPLES:
   }
 }
 
-module.exports = { rewriteForElderlyUser, generateScopedBirthdayBotReply, parseIntentWithLLM };
+/**
+ * Use LLM to find matching names from a birthday list given a search query.
+ * Returns an array of matching name strings (exact as stored), or empty array.
+ */
+async function searchNameWithLLM(query, nameList) {
+  if (!query || !nameList || nameList.length === 0) return [];
+
+  try {
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `You are a name-matching assistant. Given a search query and a list of names, return ONLY the names that genuinely match the query.
+
+A name matches if:
+- It is the same name (case-insensitive), e.g. "karan" matches "Karan Bhandari"
+- The query is a clear nickname, abbreviation, or commonly known short form of the name, e.g. "mike" matches "Michael"
+- The query has a minor typo but clearly refers to the same person, e.g. "kran" matches "Karan"
+
+A name does NOT match if:
+- It merely shares a few letters or sounds vaguely similar, e.g. "karan" does NOT match "Naman", "Varun", or "Narain"
+- Only a substring happens to overlap by coincidence
+
+Be strict. When in doubt, do NOT include the name.
+
+Respond in JSON: { "matches": ["Name1", "Name2"] }
+Return an empty array if nothing matches: { "matches": [] }
+The returned names must be EXACTLY as they appear in the provided list (preserve original casing and spelling).`,
+        },
+        {
+          role: 'user',
+          content: `Search query: "${query}"\n\nNames list:\n${nameList.join('\n')}`,
+        },
+      ],
+    });
+
+    const content = response.choices[0].message.content.trim();
+    const parsed = JSON.parse(content);
+    const matches = parsed.matches || [];
+
+    // Validate that returned names actually exist in the original list
+    const nameSet = new Set(nameList.map(n => n.toLowerCase()));
+    return matches.filter(m => nameSet.has(m.toLowerCase()));
+  } catch (err) {
+    console.error('❌ LLM name search failed:', err.message);
+    return [];
+  }
+}
+
+module.exports = { rewriteForElderlyUser, generateScopedBirthdayBotReply, parseIntentWithLLM, searchNameWithLLM };

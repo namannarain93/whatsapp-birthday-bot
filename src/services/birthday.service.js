@@ -18,7 +18,7 @@ const { normalizeMonthToShort } = require('../utils/month.utils');
 const { parseNameAndDate } = require('../parsers/date.parser');
 const { extractNamesFromDeleteInput } = require('../parsers/date.parser');
 const { safeRewrite, sendWhatsAppMessage } = require('./whatsapp.service');
-const { findFuzzyMatches } = require('../utils/fuzzyMatch');
+const { searchNameWithLLM } = require('../../llm.js');
 
 // Save a birthday for a user
 async function saveBirthdayForUser(phone, name, day, month, type = 'birthday') {
@@ -262,7 +262,7 @@ async function listUpcomingBirthdaysForUser(phone) {
   }
 }
 
-// Fuzzy search birthdays by name
+// Search birthdays by name using LLM for accurate matching
 async function fuzzySearchBirthdayByName(phone, query) {
   // Get all birthdays for this user
   const allBirthdays = await getAllBirthdays(phone);
@@ -271,8 +271,17 @@ async function fuzzySearchBirthdayByName(phone, query) {
     return { found: false };
   }
 
-  // Find fuzzy matches
-  const matches = findFuzzyMatches(query, allBirthdays, 0.6);
+  // Use LLM to find genuine matches from the name list
+  const nameList = allBirthdays.map(b => b.name);
+  const matchedNames = await searchNameWithLLM(query, nameList);
+
+  if (matchedNames.length === 0) {
+    return { found: false };
+  }
+
+  // Map matched names back to full birthday objects
+  const matchedNamesLower = new Set(matchedNames.map(n => n.toLowerCase()));
+  const matches = allBirthdays.filter(b => matchedNamesLower.has(b.name.toLowerCase()));
 
   if (matches.length === 0) {
     return { found: false };

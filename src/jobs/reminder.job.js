@@ -6,8 +6,8 @@ const {
   getBirthdaysForDate, 
   hasReminderBeenSentToday, 
   logReminderSent 
-} = require('./db.js');
-const { sendTemplateMessage } = require('./src/services/whatsapp.service');
+} = require('../../db.js');
+const { sendTemplateMessage } = require('../services/whatsapp.service');
 
 // Main reminder function
 async function sendBirthdayReminders() {

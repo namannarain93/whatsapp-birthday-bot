@@ -5,8 +5,8 @@ const {
   getAllActiveUsersWithTimezone,
   getUpcomingBirthdaysForUser,
   updateLastDailyUpcomingReminderSent
-} = require('./db.js');
-const { sendTemplateMessage } = require('./src/services/whatsapp.service');
+} = require('../../db.js');
+const { sendTemplateMessage } = require('../services/whatsapp.service');
 
 // Centralized WhatsApp template configuration
 const TEMPLATE_CONFIG = {

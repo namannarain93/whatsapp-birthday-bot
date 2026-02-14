@@ -4,9 +4,9 @@ const {
   getNewUsersForFollowup,
   getAllBirthdays,
   logReminderSent
-} = require('./db.js');
-const { sendWhatsAppMessage } = require('./src/services/whatsapp.service');
-const { formatBirthdaysChronologically } = require('./src/formatters/birthday.formatter');
+} = require('../../db.js');
+const { sendWhatsAppMessage } = require('../services/whatsapp.service');
+const { formatBirthdaysChronologically } = require('../formatters/birthday.formatter');
 
 // Build the follow-up message depending on whether the user has entries
 function buildFollowupMessage(name, birthdays) {
@@ -58,10 +58,11 @@ async function sendNewUserFollowups() {
         // Current time in user's local timezone
         const now = moment().tz(userTimezone);
         const currentHour = now.hour();
-        const currentMinute = now.minute();
 
-        // Only send at 8 PM local time (20:00–20:05 window)
-        if (currentHour !== 20 || currentMinute > 5) {
+        // Only send during the 8 PM hour (20:00–20:59).
+        // The 30-min scheduler may not land inside a narrow 5-min window,
+        // so we allow the full hour; birthday_reminder_log ensures idempotency.
+        if (currentHour !== 20) {
           skippedCount++;
           continue;
         }

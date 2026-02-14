@@ -22,11 +22,11 @@ const metrics = require('./metrics');
 // Initialize database
 const { dbReady } = require('./db.js');
 
-// Import reminder schedulers
-const { startReminderScheduler } = require('./reminder.js');
-const { startDailyUpcomingReminderScheduler } = require('./dailyUpcomingReminderJob.js');
-const { startNewUserFollowupScheduler } = require('./newUserFollowupJob.js');
-const { startOnboardingNudgeScheduler } = require('./onboardingNudgeJob.js');
+// Import job schedulers
+const { startReminderScheduler } = require('./src/jobs/reminder.job');
+const { startDailyUpcomingReminderScheduler } = require('./src/jobs/dailyUpcomingReminder.job');
+const { startNewUserFollowupScheduler } = require('./src/jobs/newUserFollowup.job');
+const { startOnboardingNudgeScheduler } = require('./src/jobs/onboardingNudge.job');
 
 const app = express();
 

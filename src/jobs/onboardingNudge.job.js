@@ -3,8 +3,8 @@ const {
   getOnboardingUsersNeedingAction,
   incrementOnboardingNudgeCount,
   completeOnboarding
-} = require('./db.js');
-const { sendWhatsAppMessage } = require('./src/services/whatsapp.service');
+} = require('../../db.js');
+const { sendWhatsAppMessage } = require('../services/whatsapp.service');
 
 // Nudge messages per onboarding step
 const NUDGE_MESSAGES = {

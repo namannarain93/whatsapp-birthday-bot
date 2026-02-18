@@ -46,6 +46,10 @@ async function getFailureRateToday() {
   }
 }
 
+function getDateKey(date) {
+  return new Date(date).toISOString().slice(0, 10);
+}
+
 async function getLast7DayTrend() {
   try {
     const result = await pool.query(
@@ -55,7 +59,29 @@ async function getLast7DayTrend() {
        GROUP BY day
        ORDER BY day`
     );
-    return result.rows;
+    // Build a lookup of counts by day string (YYYY-MM-DD)
+    const countsByDay = {};
+    result.rows.forEach(row => {
+      const key = getDateKey(row.day);
+      countsByDay[key] = parseInt(row.count) || 0;
+    });
+
+    // Generate a continuous range from 7 days ago through today (inclusive)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const start = new Date(today);
+    start.setDate(start.getDate() - 7);
+
+    const filled = [];
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      const key = getDateKey(d);
+      filled.push({
+        day: new Date(d),
+        count: countsByDay[key] || 0
+      });
+    }
+
+    return filled;
   } catch (err) {
     console.error('Error in getLast7DayTrend:', err);
     return [];
@@ -506,10 +532,29 @@ async function getDAUTrend() {
       GROUP BY day
       ORDER BY day
     `);
-    return result.rows.map(row => ({
-      day: row.day,
-      dau: parseInt(row.dau)
-    }));
+    // Build a lookup of DAU by day string (YYYY-MM-DD)
+    const dauByDay = {};
+    result.rows.forEach(row => {
+      const key = getDateKey(row.day);
+      dauByDay[key] = parseInt(row.dau) || 0;
+    });
+
+    // Generate a continuous range from 30 days ago through today (inclusive)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const start = new Date(today);
+    start.setDate(start.getDate() - 30);
+
+    const filled = [];
+    for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      const key = getDateKey(d);
+      filled.push({
+        day: new Date(d),
+        dau: dauByDay[key] || 0
+      });
+    }
+
+    return filled;
   } catch (err) {
     console.error('Error in getDAUTrend:', err);
     return [];

@@ -4,6 +4,8 @@ const {
   pool,
   getAllActiveUsersWithTimezone,
   getUpcomingBirthdaysForUser,
+  getNextNUpcomingBirthdays,
+  getTotalEventCount,
   updateLastDailyUpcomingReminderSent
 } = require('../../db.js');
 const { sendTemplateMessage } = require('../services/whatsapp.service');
@@ -95,7 +97,28 @@ async function runDailyUpcomingBirthdaysJob() {
         
         let formattedList;
         if (upcomingBirthdays.length === 0) {
-          formattedList = "No upcoming birthdays or anniversaries in the next 7 days.";
+          // Fetch next events beyond the 7-day window and total saved count
+          const [nextEvents, totalCount] = await Promise.all([
+            getNextNUpcomingBirthdays(phone, 5, 7),
+            getTotalEventCount(phone)
+          ]);
+          const nudgeCount = Math.max(0, 5 - totalCount);
+
+          let text = "No upcoming birthdays or anniversaries in the next 7 days.";
+
+          if (nextEvents.length > 0) {
+            const label = nextEvents.length === 1
+              ? "Your next event"
+              : `Here are the next ${nextEvents.length}`;
+            text += ` ${label}: ${formatBirthdayList(nextEvents)}.`;
+          }
+
+          if (nudgeCount > 0) {
+            const eventWord = totalCount === 1 ? 'event' : 'events';
+            text += ` You have ${totalCount} ${eventWord} saved — want to add ${nudgeCount} more? Just send me a name and date!`;
+          }
+
+          formattedList = text;
         } else {
           formattedList = formatBirthdayList(upcomingBirthdays);
         }

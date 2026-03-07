@@ -104,6 +104,29 @@ async function getFailureBreakdown() {
   }
 }
 
+// Failures grouped by phone number and error code — used to spot repeatedly failing recipients
+// Includes first and last failure timestamps per (phone, error_code) for full historical context
+async function getFailuresByPhone() {
+  try {
+    const result = await pool.query(
+      `SELECT
+         recipient_phone,
+         COALESCE(error_code::text, 'Unknown') AS error_code,
+         COUNT(*) AS count,
+         MIN(created_at) AS first_failure,
+         MAX(created_at) AS last_failure
+       FROM messages
+       WHERE status = 'failed' AND direction = 'outgoing'
+       GROUP BY recipient_phone, error_code
+       ORDER BY recipient_phone`
+    );
+    return result.rows;
+  } catch (err) {
+    console.error('Error in getFailuresByPhone:', err);
+    return [];
+  }
+}
+
 async function getHourlyTrendToday() {
   try {
     // We use Asia/Kolkata since that's the bot's primary timezone
@@ -733,6 +756,7 @@ async function getPostReminderEngagement() {
 
 module.exports = {
   getTotalMessagesAllTime,
+  getFailuresByPhone,
   getMessagesToday,
   getFailedToday,
   getFailureRateToday,

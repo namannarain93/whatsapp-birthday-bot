@@ -81,6 +81,7 @@ async function getUpcomingBirthdaysForUser(phone, days = 7) {
           name: b.name,
           day: b.day,
           month: b.month,
+          type: b.type,
           date: checkDate.clone() // Store the actual date for formatting
         });
       }
@@ -91,6 +92,55 @@ async function getUpcomingBirthdaysForUser(phone, days = 7) {
   upcoming.sort((a, b) => a.date.valueOf() - b.date.valueOf());
   
   return upcoming;
+}
+
+// Count total saved events (birthdays + anniversaries) for a user
+async function getTotalEventCount(phone) {
+  const res = await pool.query(
+    `SELECT COUNT(*) FROM birthdays WHERE phone = $1`,
+    [phone]
+  );
+  return parseInt(res.rows[0].count) || 0;
+}
+
+// Get the next N upcoming events for a user, starting after `startAfterDays` days from now.
+// Scans up to one year ahead and stops once N events are found.
+async function getNextNUpcomingBirthdays(phone, n = 5, startAfterDays = 7) {
+  const moment = require('moment-timezone');
+  const { getAllBirthdays } = require('./birthday.repository');
+
+  const userRes = await pool.query(
+    `SELECT timezone FROM users WHERE phone = $1`,
+    [phone]
+  );
+  if (userRes.rows.length === 0) return [];
+
+  const userTimezone = userRes.rows[0].timezone || 'Asia/Kolkata';
+  const now = moment().tz(userTimezone);
+  const allBirthdays = await getAllBirthdays(phone);
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  const found = [];
+  for (let i = startAfterDays + 1; i <= 365 && found.length < n; i++) {
+    const checkDate = now.clone().add(i, 'days');
+    const checkDay = checkDate.date();
+    const checkMonth = monthNames[checkDate.month()];
+
+    for (const b of allBirthdays) {
+      if (b.day === checkDay && b.month === checkMonth) {
+        found.push({
+          name: b.name,
+          day: b.day,
+          month: b.month,
+          type: b.type,
+          date: checkDate.clone()
+        });
+      }
+    }
+  }
+
+  return found;
 }
 
 // Update last daily upcoming reminder sent timestamp for a user
@@ -110,5 +160,7 @@ module.exports = {
   logReminderSent,
   getAllActiveUsersWithTimezone,
   getUpcomingBirthdaysForUser,
+  getTotalEventCount,
+  getNextNUpcomingBirthdays,
   updateLastDailyUpcomingReminderSent,
 };

@@ -76,6 +76,7 @@ app.get('/admin', async (req, res) => {
     const remindersSentToday = await metrics.getRemindersSentToday();
     const reminderDeliveryRate = await metrics.getReminderDeliveryRate();
     const postReminderEngagement = await metrics.getPostReminderEngagement();
+    const failuresByPhoneRaw = await metrics.getFailuresByPhone();
 
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
@@ -107,6 +108,38 @@ app.get('/admin', async (req, res) => {
       onboardingFunnel.step_3,
       onboardingFunnel.completed
     ]);
+
+    // Pivot failures-by-phone into { phone -> { errorCode -> count, total, firstFailure, lastFailure } }
+    const istOpts = { timeZone: 'Asia/Kolkata', year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true };
+    const failuresByPhoneCodes = [...new Set(failuresByPhoneRaw.map(r => r.error_code))].sort();
+    const failuresByPhoneMap = {};
+    for (const row of failuresByPhoneRaw) {
+      const phone = row.recipient_phone || 'Unknown';
+      if (!failuresByPhoneMap[phone]) failuresByPhoneMap[phone] = { total: 0, firstFailure: null, lastFailure: null };
+      failuresByPhoneMap[phone][row.error_code] = parseInt(row.count) || 0;
+      failuresByPhoneMap[phone].total += parseInt(row.count) || 0;
+      const rowFirst = row.first_failure ? new Date(row.first_failure) : null;
+      const rowLast = row.last_failure ? new Date(row.last_failure) : null;
+      if (rowFirst && (!failuresByPhoneMap[phone].firstFailure || rowFirst < failuresByPhoneMap[phone].firstFailure)) {
+        failuresByPhoneMap[phone].firstFailure = rowFirst;
+      }
+      if (rowLast && (!failuresByPhoneMap[phone].lastFailure || rowLast > failuresByPhoneMap[phone].lastFailure)) {
+        failuresByPhoneMap[phone].lastFailure = rowLast;
+      }
+    }
+    const failuresByPhoneRows = Object.entries(failuresByPhoneMap)
+      .sort(([, a], [, b]) => b.total - a.total)
+      .map(([phone, counts], i) => `
+        <tr>
+          <td>${i + 1}</td>
+          <td>${phone}</td>
+          ${failuresByPhoneCodes.map(code => `<td>${counts[code] || 0}</td>`).join('')}
+          <td><strong>${counts.total}</strong></td>
+          <td>${counts.firstFailure ? counts.firstFailure.toLocaleString('en-IN', istOpts) : '—'}</td>
+          <td>${counts.lastFailure ? counts.lastFailure.toLocaleString('en-IN', istOpts) : '—'}</td>
+        </tr>
+      `).join('');
+    const failuresByPhoneHeaderCells = failuresByPhoneCodes.map(code => `<th>${code}</th>`).join('');
 
     // Unknown messages table rows
     const unknownMessageRows = recentUnknownMessages.map((row, i) => `
@@ -326,6 +359,26 @@ app.get('/admin', async (req, res) => {
                               </thead>
                               <tbody>
                                   ${unknownMessageRows || '<tr><td colspan="4">No unknown intent messages yet.</td></tr>'}
+                              </tbody>
+                          </table>
+                      </div>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Failure Breakdown by Phone Number (All Time)</h3>
+                      <div class="scrollable-table">
+                          <table>
+                              <thead>
+                                  <tr>
+                                      <th>#</th>
+                                      <th>Phone Number</th>
+                                      ${failuresByPhoneHeaderCells}
+                                      <th>Total</th>
+                                      <th>First Failure (IST)</th>
+                                      <th>Last Failure (IST)</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  ${failuresByPhoneRows || `<tr><td colspan="${5 + failuresByPhoneCodes.length}">No failures recorded.</td></tr>`}
                               </tbody>
                           </table>
                       </div>

@@ -15,6 +15,7 @@ if (missingVars.length > 0) {
 }
 
 const express = require('express');
+const XLSX = require('xlsx');
 const webhookRoutes = require('./src/routes/webhook.routes');
 const { sendTemplateMessage } = require('./src/services/whatsapp.service');
 const metrics = require('./metrics');
@@ -437,7 +438,10 @@ app.get('/admin', async (req, res) => {
                       </table>
                   </div>
                   <div class="chart-container" style="grid-column: span 2;">
-                      <h3>All Birthdays & Anniversaries (${allEvents.length} entries)</h3>
+                      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                          <h3 style="margin: 0;">All Birthdays & Anniversaries (${allEvents.length} entries)</h3>
+                          <a href="/admin/export/events.xlsx" style="display: inline-block; padding: 7px 16px; background: #27ae60; color: #fff; text-decoration: none; border-radius: 6px; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.02em;">⬇ Export to Excel</a>
+                      </div>
                       <div class="scrollable-table">
                           <table>
                               <thead>
@@ -677,6 +681,32 @@ app.get('/send-test', async (req, res) => {
   } catch (err) {
     console.error('SEND TEST ERROR:', err.message);
     res.status(500).json({ error: 'Failed to send test message', details: err.message });
+  }
+});
+
+// Export all birthdays & anniversaries as Excel
+app.get('/admin/export/events.xlsx', async (req, res) => {
+  try {
+    const events = await metrics.getAllEventsTable();
+    const rows = events.map((e, i) => ({
+      '#': i + 1,
+      'Phone Number': e.phone,
+      'Name': e.name,
+      'Day': e.day,
+      'Month': e.month,
+      'Type': e.type,
+      'Added On (IST)': e.createdAt
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Birthdays & Anniversaries');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="birthdays-anniversaries.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) {
+    console.error('Error exporting events to Excel:', err);
+    res.status(500).json({ error: 'Failed to export events' });
   }
 });
 

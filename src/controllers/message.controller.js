@@ -124,11 +124,35 @@ async function resumePendingAction(phone, message, pending) {
   }
 }
 
+const FORWARD_PHONE_NUMBER_ID = process.env.FORWARD_PHONE_NUMBER_ID || '1001734719698872';
+const FORWARD_BACKEND_URL = process.env.FORWARD_BACKEND_URL || 'https://san-install-answers-philip.trycloudflare.com/whatsapp/webhook';
+
+async function forwardToBackend(req, res) {
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const response = await fetch(FORWARD_BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    });
+    console.log(`[FORWARD] Forwarded to ${FORWARD_BACKEND_URL} — status ${response.status}`);
+  } catch (err) {
+    console.error(`[FORWARD] Failed to forward to ${FORWARD_BACKEND_URL}:`, err.message);
+  }
+  return res.sendStatus(200);
+}
+
 async function handleIncomingMessage(req, res) {
   try {
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
+
+    // 🔀 Forward to different backend if message is for a different WhatsApp number
+    const incomingPhoneNumberId = value?.metadata?.phone_number_id;
+    if (FORWARD_PHONE_NUMBER_ID && incomingPhoneNumberId === FORWARD_PHONE_NUMBER_ID) {
+      return forwardToBackend(req, res);
+    }
 
     // 📩 Handle Status Updates (delivered, read, failed)
     const statusObj = value?.statuses?.[0];

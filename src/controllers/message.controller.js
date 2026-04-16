@@ -144,6 +144,7 @@ async function forwardToBackend(req, res) {
 
 async function handleIncomingMessage(req, res) {
   try {
+    console.log('Received webhook:', JSON.stringify(req.body));
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
     const value = change?.value;
@@ -151,6 +152,7 @@ async function handleIncomingMessage(req, res) {
     // 🔀 Forward to different backend if message is for a different WhatsApp number
     const incomingPhoneNumberId = value?.metadata?.phone_number_id;
     if (FORWARD_PHONE_NUMBER_ID && incomingPhoneNumberId === FORWARD_PHONE_NUMBER_ID) {
+      console.log(`[FORWARD] Incoming message for phone_number_id ${incomingPhoneNumberId} — forwarding to ${FORWARD_BACKEND_URL}`);
       return forwardToBackend(req, res);
     }
 

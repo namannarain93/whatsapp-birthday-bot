@@ -380,17 +380,26 @@ async function getRecentIncomingMessages(limit = 25) {
 async function getAllUsersTable() {
   try {
     const result = await pool.query(
-      `SELECT
-         u.phone,
+      `WITH all_phones AS (
+         SELECT phone FROM users
+         UNION
+         SELECT phone FROM birthdays
+       ),
+       event_counts AS (
+         SELECT phone, COUNT(*) AS event_count
+         FROM birthdays
+         GROUP BY phone
+       )
+       SELECT
+         ap.phone,
          u.timezone,
          u.last_interaction_at,
          u.created_at,
-         COUNT(b.id) AS event_count
-       FROM users u
-       LEFT JOIN birthdays b ON b.phone = u.phone
-       WHERE u.created_at >= '2026-01-31'
-       GROUP BY u.phone, u.timezone, u.last_interaction_at, u.created_at
-       ORDER BY u.created_at DESC`
+         COALESCE(ec.event_count, 0) AS event_count
+       FROM all_phones ap
+       LEFT JOIN users u ON u.phone = ap.phone
+       LEFT JOIN event_counts ec ON ec.phone = ap.phone
+       ORDER BY u.created_at DESC NULLS LAST, ap.phone`
     );
 
     const istOpts = {

@@ -25,14 +25,16 @@ async function logReminderSent(phone, date, type = 'daily_today') {
   );
 }
 
-// Get all active users with timezone (users who have at least one birthday saved)
+// Users eligible for Sunday weekly reminders: has events, timezone, and interacted within 3 months
 async function getAllActiveUsersWithTimezone() {
   const res = await pool.query(
     `
-    SELECT DISTINCT u.phone, u.timezone, u.last_weekly_reminder_sent
+    SELECT DISTINCT u.phone, u.timezone, u.last_weekly_reminder_sent, u.last_interaction_at
     FROM users u
     INNER JOIN birthdays b ON u.phone = b.phone
     WHERE u.timezone IS NOT NULL
+      AND u.last_interaction_at IS NOT NULL
+      AND u.last_interaction_at >= NOW() - INTERVAL '3 months'
     `
   );
   return res.rows;

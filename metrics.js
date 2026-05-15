@@ -1,4 +1,5 @@
 const { pool } = require('./db.js');
+const { getSundayReminderStatus } = require('./src/db/user.repository');
 
 async function getTotalMessagesAllTime() {
   try {
@@ -321,6 +322,9 @@ async function getUserEventSummaryTable(limit = 25) {
       birthdays: parseInt(row.birthdays, 10) || 0,
       anniversaries: parseInt(row.anniversaries, 10) || 0,
       totalEvents: parseInt(row.total_events, 10) || 0,
+      lastInteractionTs: row.last_interaction_at
+        ? new Date(row.last_interaction_at).getTime()
+        : 0,
       lastInteraction: row.last_interaction_at
         ? new Date(row.last_interaction_at).toLocaleString('en-IN', {
             timeZone: 'Asia/Kolkata',
@@ -376,10 +380,17 @@ async function getRecentIncomingMessages(limit = 25) {
 async function getAllUsersTable() {
   try {
     const result = await pool.query(
-      `SELECT phone, timezone, last_interaction_at, created_at
-       FROM users
-       WHERE created_at >= '2026-01-31'
-       ORDER BY created_at DESC`
+      `SELECT
+         u.phone,
+         u.timezone,
+         u.last_interaction_at,
+         u.created_at,
+         COUNT(b.id) AS event_count
+       FROM users u
+       LEFT JOIN birthdays b ON b.phone = u.phone
+       WHERE u.created_at >= '2026-01-31'
+       GROUP BY u.phone, u.timezone, u.last_interaction_at, u.created_at
+       ORDER BY u.created_at DESC`
     );
 
     const istOpts = {
@@ -393,19 +404,69 @@ async function getAllUsersTable() {
       hour12: true
     };
 
-    return result.rows.map(row => ({
-      phone: row.phone || 'Unknown',
-      timezone: row.timezone || 'Unknown',
-      lastInteraction: row.last_interaction_at
-        ? new Date(row.last_interaction_at).toLocaleString('en-IN', istOpts)
-        : 'Never',
-      createdAt: row.created_at
-        ? new Date(row.created_at).toLocaleString('en-IN', istOpts)
-        : 'Unknown'
-    }));
+    return result.rows.map(row => {
+      const eventCount = parseInt(row.event_count, 10) || 0;
+      const isActive = getSundayReminderStatus(row.last_interaction_at) === 'active';
+      const eligible = isActive && eventCount > 0 && !!row.timezone;
+      const sundayReminderStatus = eligible ? 'active' : 'dormant';
+      return {
+        phone: row.phone || 'Unknown',
+        timezone: row.timezone || 'Unknown',
+        eventCount,
+        sundayReminderStatus,
+        sundayReminderActive: eligible ? 1 : 0,
+        lastInteractionTs: row.last_interaction_at
+          ? new Date(row.last_interaction_at).getTime()
+          : 0,
+        lastInteraction: row.last_interaction_at
+          ? new Date(row.last_interaction_at).toLocaleString('en-IN', istOpts)
+          : 'Never',
+        createdAtTs: row.created_at ? new Date(row.created_at).getTime() : 0,
+        createdAt: row.created_at
+          ? new Date(row.created_at).toLocaleString('en-IN', istOpts)
+          : 'Unknown'
+      };
+    });
   } catch (err) {
     console.error('Error in getAllUsersTable:', err);
     return [];
+  }
+}
+
+// Global Sunday reminder eligibility counts across ALL users.
+// Eligible = has at least one saved event + timezone set + interacted within 3 months.
+async function getSundayReminderStats() {
+  try {
+    const result = await pool.query(
+      `
+      WITH eligibility AS (
+        SELECT
+          u.phone,
+          (
+            u.timezone IS NOT NULL
+            AND EXISTS (SELECT 1 FROM birthdays b WHERE b.phone = u.phone)
+            AND u.last_interaction_at IS NOT NULL
+            AND u.last_interaction_at >= NOW() - INTERVAL '3 months'
+          ) AS is_active
+        FROM users u
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE is_active) AS active,
+        COUNT(*) FILTER (WHERE NOT is_active) AS dormant,
+        COUNT(*) AS total
+      FROM eligibility
+      `
+    );
+
+    const row = result.rows[0] || {};
+    return {
+      active: parseInt(row.active, 10) || 0,
+      dormant: parseInt(row.dormant, 10) || 0,
+      total: parseInt(row.total, 10) || 0
+    };
+  } catch (err) {
+    console.error('Error in getSundayReminderStats:', err);
+    return { active: 0, dormant: 0, total: 0 };
   }
 }
 
@@ -772,6 +833,7 @@ module.exports = {
   getUserEventSummaryTable,
   getRecentIncomingMessages,
   getAllUsersTable,
+  getSundayReminderStats,
   getAllEventsTable,
   // Onboarding funnel
   getOnboardingFunnel,

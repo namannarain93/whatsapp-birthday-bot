@@ -63,6 +63,7 @@ app.get('/admin', async (req, res) => {
     const recentIncoming = await metrics.getRecentIncomingMessages();
     const allEvents = await metrics.getAllEventsTable();
     const allUsers = await metrics.getAllUsersTable();
+    const sundayReminderStats = await metrics.getSundayReminderStats();
 
     // New metrics
     const onboardingFunnel = await metrics.getOnboardingFunnel();
@@ -165,7 +166,12 @@ app.get('/admin', async (req, res) => {
     `).join('');
 
     const userEventRows = userEventSummary.map((row, i) => `
-      <tr>
+      <tr
+        data-birthdays="${row.birthdays}"
+        data-anniversaries="${row.anniversaries}"
+        data-total="${row.totalEvents}"
+        data-last-interaction="${row.lastInteractionTs}"
+      >
         <td>${i + 1}</td>
         <td>${row.phone}</td>
         <td>${row.birthdays}</td>
@@ -185,12 +191,18 @@ app.get('/admin', async (req, res) => {
     `).join('');
 
     const allUserRows = allUsers.map((row, i) => `
-      <tr>
+      <tr
+        data-events="${row.eventCount}"
+        data-last-interaction="${row.lastInteractionTs}"
+        data-created="${row.createdAtTs}"
+        data-sunday-reminder="${row.sundayReminderActive}"
+      >
         <td>${i + 1}</td>
         <td>${row.phone}</td>
         <td>${row.timezone}</td>
         <td>${row.lastInteraction}</td>
         <td>${row.createdAt}</td>
+        <td><span class="reminder-status reminder-status-${row.sundayReminderStatus}">${row.sundayReminderStatus}</span></td>
       </tr>
     `).join('');
 
@@ -227,6 +239,12 @@ app.get('/admin', async (req, res) => {
               table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.95rem; }
               th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
               th { background: #fafafa; font-weight: 600; color: #555; }
+              th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+              th.sortable:hover { background: #f0f0f0; color: #222; }
+              th.sortable .sort-indicator { font-size: 0.75rem; color: #3498db; }
+              .reminder-status { font-size: 0.85rem; font-weight: 600; text-transform: capitalize; }
+              .reminder-status-active { color: #27ae60; }
+              .reminder-status-dormant { color: #95a5a6; }
               tr:nth-child(even) td { background: #fcfcfc; }
               .scrollable-table { max-height: 500px; overflow-y: auto; }
           </style>
@@ -290,6 +308,11 @@ app.get('/admin', async (req, res) => {
                   <div class="card${parseFloat(unknownIntentRate) > 20 ? ' fail' : ''}">
                       <h3>Unknown Intent Rate</h3>
                       <div class="value">${unknownIntentRate}%</div>
+                  </div>
+                  <div class="card">
+                      <h3>Sunday Reminder Active</h3>
+                      <div class="value">${sundayReminderStats.active}</div>
+                      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">${sundayReminderStats.dormant} dormant · ${sundayReminderStats.total} total</div>
                   </div>
               </div>
 
@@ -421,15 +444,15 @@ app.get('/admin', async (req, res) => {
                   </div>
                   <div class="chart-container" style="grid-column: span 2;">
                       <h3>Users: Birthdays and Anniversaries (Last 25)</h3>
-                      <table>
+                      <table id="userEventsTable">
                           <thead>
                               <tr>
                                   <th>#</th>
                                   <th>Phone Number</th>
-                                  <th>Birthdays</th>
-                                  <th>Anniversaries</th>
-                                  <th>Total</th>
-                                  <th>Last Interaction (IST)</th>
+                                  <th class="sortable" data-sort="birthdays">Birthdays<span class="sort-indicator"></span></th>
+                                  <th class="sortable" data-sort="anniversaries">Anniversaries<span class="sort-indicator"></span></th>
+                                  <th class="sortable" data-sort="total">Total<span class="sort-indicator"></span></th>
+                                  <th class="sortable" data-sort="last-interaction">Last Interaction (IST)<span class="sort-indicator"></span></th>
                               </tr>
                           </thead>
                           <tbody>
@@ -463,18 +486,19 @@ app.get('/admin', async (req, res) => {
                   <div class="chart-container" style="grid-column: span 2;">
                       <h3>All Users (${allUsers.length} users)</h3>
                       <div class="scrollable-table">
-                          <table>
+                          <table id="allUsersTable">
                               <thead>
                                   <tr>
                                       <th>#</th>
                                       <th>Phone Number</th>
                                       <th>Timezone</th>
-                                      <th>Last Interaction (IST)</th>
-                                      <th>Joined On (IST)</th>
+                                      <th class="sortable" data-sort="last-interaction">Last Interaction (IST)<span class="sort-indicator"></span></th>
+                                      <th class="sortable" data-sort="created">Joined On (IST)<span class="sort-indicator"></span></th>
+                                      <th class="sortable" data-sort="sunday-reminder">Sunday Reminder<span class="sort-indicator"></span></th>
                                   </tr>
                               </thead>
                               <tbody>
-                                  ${allUserRows || '<tr><td colspan="5">No users found.</td></tr>'}
+                                  ${allUserRows || '<tr><td colspan="6">No users found.</td></tr>'}
                               </tbody>
                           </table>
                       </div>
@@ -599,6 +623,46 @@ app.get('/admin', async (req, res) => {
                       plugins: { legend: { display: false } }
                   }
               });
+
+              function enableNumericTableSort(tableId) {
+                  const table = document.getElementById(tableId);
+                  if (!table) return;
+                  const tbody = table.querySelector('tbody');
+                  const headers = table.querySelectorAll('th.sortable');
+                  let currentSort = { key: null, asc: true };
+
+                  headers.forEach(th => {
+                      th.addEventListener('click', () => {
+                          const key = th.dataset.sort;
+                          const asc = currentSort.key === key ? !currentSort.asc : true;
+                          currentSort = { key, asc };
+                          headers.forEach(h => {
+                              const indicator = h.querySelector('.sort-indicator');
+                              if (h.dataset.sort === key) {
+                                  indicator.textContent = asc ? ' ▲' : ' ▼';
+                              } else {
+                                  indicator.textContent = '';
+                              }
+                          });
+                          const attr = 'data-' + key;
+                          const rows = Array.from(tbody.querySelectorAll('tr')).filter(
+                              row => row.querySelectorAll('td').length > 1 && row.hasAttribute(attr)
+                          );
+                          rows.sort((a, b) => {
+                              const va = Number(a.getAttribute(attr)) || 0;
+                              const vb = Number(b.getAttribute(attr)) || 0;
+                              return asc ? va - vb : vb - va;
+                          });
+                          rows.forEach((row, i) => {
+                              row.cells[0].textContent = i + 1;
+                              tbody.appendChild(row);
+                          });
+                      });
+                  });
+              }
+
+              enableNumericTableSort('userEventsTable');
+              enableNumericTableSort('allUsersTable');
 
               // Intent Distribution
               new Chart(document.getElementById('intentChart'), {

@@ -1,5 +1,20 @@
 const { pool } = require('./pool');
 
+const SUNDAY_REMINDER_INACTIVITY_MONTHS = 3;
+
+function isSundayReminderActive(lastInteractionAt) {
+  if (!lastInteractionAt) return false;
+  const last = new Date(lastInteractionAt);
+  if (Number.isNaN(last.getTime())) return false;
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - SUNDAY_REMINDER_INACTIVITY_MONTHS);
+  return last >= cutoff;
+}
+
+function getSundayReminderStatus(lastInteractionAt) {
+  return isSundayReminderActive(lastInteractionAt) ? 'active' : 'dormant';
+}
+
 // Get all users with their timezones and last interaction timestamps
 async function getAllUsers() {
   const res = await pool.query(
@@ -124,6 +139,9 @@ async function clearPendingAction(phone) {
 }
 
 module.exports = {
+  SUNDAY_REMINDER_INACTIVITY_MONTHS,
+  isSundayReminderActive,
+  getSundayReminderStatus,
   getAllUsers,
   updateLastInteraction,
   userExists,

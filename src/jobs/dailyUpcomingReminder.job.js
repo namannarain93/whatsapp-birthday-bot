@@ -9,6 +9,7 @@ const {
   updateLastDailyUpcomingReminderSent
 } = require('../../db.js');
 const { sendTemplateMessage } = require('../services/whatsapp.service');
+const { isSundayReminderActive } = require('../db/user.repository');
 
 // Centralized WhatsApp template configuration
 const TEMPLATE_CONFIG = {
@@ -67,9 +68,15 @@ async function runDailyUpcomingBirthdaysJob() {
 
     for (const user of users) {
       try {
-        const { phone, timezone } = user;
+        const { phone, timezone, last_interaction_at: lastInteractionAt } = user;
         const userTimezone = timezone || 'Asia/Kolkata';
         const now = moment().tz(userTimezone);
+
+        if (!isSundayReminderActive(lastInteractionAt)) {
+          console.log(`[WEEKLY_UPCOMING_REMINDER] ⏭️  Skipping ${phone} - inactive for 3+ months (no Sunday reminder)`);
+          skippedCount++;
+          continue;
+        }
         
         // Only send on Sundays (day() === 0 is Sunday in moment.js)
         if (now.day() !== 0) {

@@ -4,6 +4,7 @@ const { updateLastInteraction, updateMessageStatus, saveReceivedMessage, getUser
 const { handleOnboarding, isInOnboarding, handleOnboardingResponse, sendHelpMessage } = require('../services/onboarding.service');
 const { parseIntentWithLLM, generateScopedBirthdayBotReply } = require('../../llm.js');
 const { processMultilineMessage } = require('../parsers/multiline.parser');
+const { parseNameAndDate } = require('../parsers/date.parser');
 const { markWelcomeSeen } = require('../../db.js');
 const { safeRewrite, sendWhatsAppMessage } = require('../services/whatsapp.service');
 const {
@@ -22,6 +23,23 @@ const {
   getCurrentMonthName,
   normalizeMonthToShort
 } = require('../utils/month.utils');
+
+// Filler words that should never be treated as (part of) a person's name when
+// recovering a name from raw text. If nothing else remains, we have no real name.
+const NAME_FILLER_WORDS = new Set([
+  'birthday', 'birthdays', 'bday', 'bdays', 'anniversary', 'anniv', 'anniversaries',
+  'of', 'on', 'is', 'for', 'the', 'a', 'an', 'save', 'add', 'remind', 'set',
+  'my', 'me', 'i', 'mine', 'myself'
+]);
+
+function stripFillerWords(name) {
+  if (!name) return '';
+  return name
+    .split(/\s+/)
+    .filter(token => token && !NAME_FILLER_WORDS.has(token.toLowerCase()))
+    .join(' ')
+    .trim();
+}
 
 /**
  * Resume a pending action using the user's follow-up message.
@@ -303,6 +321,28 @@ async function handleIncomingMessage(req, res) {
           parsed.name = null;
           parsed.needs_clarification = true;
           parsed.clarification_question = `What name should I save your ${eventName} under?`;
+        }
+      }
+    }
+
+    // Deterministic name recovery: the LLM sometimes fails to extract a clear
+    // third-party name from "<name> <month> <day>" messages (e.g. "meghna may 29"
+    // → name:null). When the message isn't about the user, recover name + date
+    // from the raw text instead of pestering the user for a name we already have.
+    if (
+      (parsed.intent === 'save' || parsed.intent === 'update') &&
+      !parsed.name &&
+      !messageIsSelfReferential
+    ) {
+      const recovered = parseNameAndDate(message);
+      if (recovered) {
+        const cleanedName = stripFillerWords(recovered.name);
+        if (cleanedName) {
+          parsed.name = cleanedName;
+          if (!parsed.day) parsed.day = recovered.day;
+          if (!parsed.month) parsed.month = recovered.month;
+          parsed.needs_clarification = false;
+          parsed.clarification_question = null;
         }
       }
     }

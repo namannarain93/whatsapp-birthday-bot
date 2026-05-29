@@ -270,7 +270,13 @@ async function handleIncomingMessage(req, res) {
       parsed.query &&
       selfReferentialNames.includes(parsed.query.toLowerCase().trim())
     );
+    // Only treat a name-less dated message as "my birthday" when the original
+    // message actually refers to the user (my/me/mine/myself/I). Otherwise a
+    // message like "meghan may 29" (where the LLM failed to extract the name)
+    // would be silently saved under the stored user name.
+    const messageIsSelfReferential = /\b(my|me|mine|myself|i)\b/i.test(message);
     const isSelfReferential = isSelfReferentialName || isSelfReferentialQuery || (
+      messageIsSelfReferential &&
       parsed.needs_clarification &&
       parsed.clarification_question &&
       parsed.day && parsed.month

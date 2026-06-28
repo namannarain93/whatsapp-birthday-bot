@@ -29,12 +29,11 @@ async function sendBirthdayReminders() {
         
         // Get current time in user's timezone
         const now = moment().tz(userTimezone);
-        const currentHour = now.hour();
-        const currentMinute = now.minute();
+        const todayAt9AM = now.clone().startOf('day').hour(9).minute(0).second(0).millisecond(0);
         
-        // Only send reminders at 9:00 AM (user's local time)
-        // Allow a small window (9:00-9:05) to account for scheduler timing variations
-        if (currentHour !== 9 || currentMinute > 5) {
+        // Only send reminders after 9:00 AM in the user's local timezone.
+        // The daily reminder log below prevents duplicate sends later in the day.
+        if (now.isBefore(todayAt9AM)) {
           continue;
         }
         

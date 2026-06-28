@@ -374,32 +374,33 @@ app.get('/admin', async (req, res) => {
 
               <!-- ── MONTHLY GROWTH METRICS ── -->
               <h2 style="margin-top: 30px; color: #555;">Monthly Metrics</h2>
-              <p style="color: #888; font-size: 0.85rem; margin-top: -8px;">
-                  Tracking toward <strong>1,000 active users</strong> (active = receiving Sunday reminders). Target ramps from the current
-                  month to the goal over 6 months; progress compares active users against that target. Active users is a live snapshot,
-                  so only the current month is populated (past months can't be reconstructed).
-              </p>
-              <div class="chart-container">
-                  <table>
-                      <thead>
-                          <tr>
-                              <th>Month</th>
-                              <th>New Users</th>
-                              <th>Cumulative Users</th>
-                              <th>Active Users</th>
-                              <th>Target Active Users</th>
-                              <th>Progress vs Target</th>
-                              <th>Events Added</th>
-                              <th>Messages Sent</th>
-                          </tr>
-                      </thead>
-                      <tbody>
-                          ${monthlyMetricRows || '<tr><td colspan="8">No data yet.</td></tr>'}
-                      </tbody>
-                  </table>
-              </div>
 
               <div class="charts">
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Progress Toward 1,000 Active Users</h3>
+                      <p style="color: #888; font-size: 0.85rem; margin-top: 0;">
+                          Active = users receiving Sunday reminders. Target ramps from the current month to the goal over 6 months;
+                          progress compares active users against that target. Active users is a live snapshot, so only the current
+                          month is populated (past months can't be reconstructed).
+                      </p>
+                      <table>
+                          <thead>
+                              <tr>
+                                  <th>Month</th>
+                                  <th>New Users</th>
+                                  <th>Cumulative Users</th>
+                                  <th>Active Users</th>
+                                  <th>Target Active Users</th>
+                                  <th>Progress vs Target</th>
+                                  <th>Events Added</th>
+                                  <th>Messages Sent</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              ${monthlyMetricRows || '<tr><td colspan="8">No data yet.</td></tr>'}
+                          </tbody>
+                      </table>
+                  </div>
                   <div class="chart-container" style="grid-column: span 2;">
                       <h3>Hourly Activity Today (IST)</h3>
                       <canvas id="hourlyChart"></canvas>

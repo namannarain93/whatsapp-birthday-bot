@@ -841,53 +841,70 @@ async function getPostReminderEngagement() {
 // Builds a full 12-month table for the current year (including future/empty months)
 // to track progress toward the active-users goal (1000 active users in 6 months).
 async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) {
+  // Run each query independently so a single failure never blanks the whole table.
+  const safeRows = async (label, sql) => {
+    try {
+      const res = await pool.query(sql);
+      return res.rows;
+    } catch (err) {
+      console.error(`getMonthlyMetrics query failed (${label}):`, err.message);
+      return [];
+    }
+  };
+
   try {
-    const [newUsersRes, eventsRes, sentRes, sundayStats] = await Promise.all([
-      // New (first-seen) users per month, across users + birthdays phones
-      pool.query(`
-        WITH all_phones AS (
-          SELECT phone, created_at FROM users WHERE created_at IS NOT NULL
-          UNION ALL
-          SELECT phone, created_at FROM birthdays WHERE created_at IS NOT NULL
-        ),
-        first_seen AS (
-          SELECT phone, MIN(created_at) AS joined_at
-          FROM all_phones
-          GROUP BY phone
-        )
-        SELECT DATE_TRUNC('month', joined_at) AS month, COUNT(*) AS new_users
-        FROM first_seen
-        GROUP BY month
-      `),
-      // Events (birthdays + anniversaries) added per month
-      pool.query(`
-        SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS events
-        FROM birthdays
-        GROUP BY month
-      `),
-      // Outgoing messages sent per month
-      pool.query(`
-        SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS sent
-        FROM messages
-        WHERE direction = 'outgoing'
-        GROUP BY month
-      `),
-      // Active users = Sunday-reminder-eligible users (same definition as the KPI card).
-      // This is a point-in-time snapshot, so only the current month can be populated.
-      getSundayReminderStats()
-    ]);
-    const currentActiveUsers = sundayStats.active;
+    // New (first-seen) users per month, across users + birthdays phones
+    const newUsersRows = await safeRows('newUsers', `
+      WITH all_phones AS (
+        SELECT phone, created_at FROM users WHERE created_at IS NOT NULL
+        UNION ALL
+        SELECT phone, created_at FROM birthdays WHERE created_at IS NOT NULL
+      ),
+      first_seen AS (
+        SELECT phone, MIN(created_at) AS joined_at
+        FROM all_phones
+        GROUP BY phone
+      )
+      SELECT DATE_TRUNC('month', joined_at) AS month, COUNT(*) AS new_users
+      FROM first_seen
+      GROUP BY month
+    `);
+    // Events (birthdays + anniversaries) added per month
+    const eventsRows = await safeRows('events', `
+      SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS events
+      FROM birthdays
+      WHERE created_at IS NOT NULL
+      GROUP BY month
+    `);
+    // Outgoing messages sent per month
+    const sentRows = await safeRows('sent', `
+      SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS sent
+      FROM messages
+      WHERE direction = 'outgoing' AND created_at IS NOT NULL
+      GROUP BY month
+    `);
+    // Active users = Sunday-reminder-eligible users (same definition as the KPI card).
+    // Point-in-time snapshot, so only the current month can be populated.
+    let currentActiveUsers = 0;
+    try {
+      currentActiveUsers = (await getSundayReminderStats()).active;
+    } catch (err) {
+      console.error('getMonthlyMetrics sunday stats failed:', err.message);
+    }
 
     const monthKey = (val) => new Date(val).toISOString().slice(0, 7); // 'YYYY-MM'
     const toMap = (rows, field) => {
       const map = {};
-      rows.forEach(r => { map[monthKey(r.month)] = parseInt(r[field], 10) || 0; });
+      rows.forEach(r => {
+        if (r.month == null) return;
+        map[monthKey(r.month)] = parseInt(r[field], 10) || 0;
+      });
       return map;
     };
 
-    const newUsersMap = toMap(newUsersRes.rows, 'new_users');
-    const eventsMap = toMap(eventsRes.rows, 'events');
-    const sentMap = toMap(sentRes.rows, 'sent');
+    const newUsersMap = toMap(newUsersRows, 'new_users');
+    const eventsMap = toMap(eventsRows, 'events');
+    const sentMap = toMap(sentRows, 'sent');
 
     const now = new Date();
     const year = now.getFullYear();

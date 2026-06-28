@@ -867,21 +867,24 @@ async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) 
       )
       SELECT DATE_TRUNC('month', joined_at) AS month, COUNT(*) AS new_users
       FROM first_seen
-      GROUP BY month
+      GROUP BY DATE_TRUNC('month', joined_at)
     `);
-    // Events (birthdays + anniversaries) added per month
+    // Events (birthdays + anniversaries) added per month.
+    // NOTE: birthdays has its own "month" column, so we must GROUP BY the
+    // DATE_TRUNC expression explicitly — "GROUP BY month" would bind to that
+    // column instead of the alias and error out.
     const eventsRows = await safeRows('events', `
       SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS events
       FROM birthdays
       WHERE created_at IS NOT NULL
-      GROUP BY month
+      GROUP BY DATE_TRUNC('month', created_at)
     `);
     // Outgoing messages sent per month
     const sentRows = await safeRows('sent', `
       SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS sent
       FROM messages
       WHERE direction = 'outgoing' AND created_at IS NOT NULL
-      GROUP BY month
+      GROUP BY DATE_TRUNC('month', created_at)
     `);
     // Active users = Sunday-reminder-eligible users (same definition as the KPI card).
     // Point-in-time snapshot, so only the current month can be populated.

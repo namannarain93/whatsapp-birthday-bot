@@ -223,14 +223,22 @@ async function getEventsAddedToday() {
 async function getWeeklyEventsTrend() {
   try {
     const result = await pool.query(
-      `SELECT 
-         DATE_TRUNC('week', created_at) AS week,
-         COUNT(*) FILTER (WHERE LOWER(type) = 'birthday') AS birthdays,
-         COUNT(*) FILTER (WHERE LOWER(type) = 'anniversary') AS anniversaries
-       FROM birthdays 
-       WHERE created_at >= CURRENT_DATE - INTERVAL '5 weeks'
-       GROUP BY week
-       ORDER BY week`
+      `WITH weeks AS (
+         SELECT generate_series(
+           DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '4 weeks',
+           DATE_TRUNC('week', CURRENT_DATE),
+           INTERVAL '1 week'
+         ) AS week
+       )
+       SELECT
+         weeks.week AS week,
+         COUNT(b.*) FILTER (WHERE LOWER(b.type) = 'birthday') AS birthdays,
+         COUNT(b.*) FILTER (WHERE LOWER(b.type) = 'anniversary') AS anniversaries
+       FROM weeks
+       LEFT JOIN birthdays b
+         ON DATE_TRUNC('week', b.created_at) = weeks.week
+       GROUP BY weeks.week
+       ORDER BY weeks.week`
     );
 
     return result.rows.map(row => ({

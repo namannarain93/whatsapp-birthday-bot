@@ -915,6 +915,11 @@ async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) 
       .filter(([k]) => k < `${year}-01`)
       .reduce((sum, [, v]) => sum + v, 0);
 
+    // Cumulative stored events (birthdays/annivs) carried in from before this year
+    let cumulativeEvents = Object.entries(eventsMap)
+      .filter(([k]) => k < `${year}-01`)
+      .reduce((sum, [, v]) => sum + v, 0);
+
     // Baseline for the target curve = cumulative users through the current month
     let baseline = cumulative;
     for (let m = 0; m <= currentMonthIdx; m++) {
@@ -928,6 +933,7 @@ async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) 
       const key = `${year}-${String(m + 1).padStart(2, '0')}`;
       const newUsers = newUsersMap[key] || 0;
       cumulative += newUsers;
+      cumulativeEvents += eventsMap[key] || 0;
 
       // Active users uses the Sunday-reminder definition (current snapshot only).
       // Historical eligibility can't be reconstructed, so non-current months are null.
@@ -951,6 +957,7 @@ async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) 
         cumulativeUsers: cumulative,
         activeUsers,
         eventsAdded: eventsMap[key] || 0,
+        cumulativeEvents,
         messagesSent: sentMap[key] || 0,
         targetActiveUsers: target,
         progress

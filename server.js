@@ -227,7 +227,7 @@ app.get('/admin', async (req, res) => {
         <td>${activeUsers}</td>
         <td>${target}</td>
         <td>${progressCell}</td>
-        <td>${row.eventsAdded}</td>
+        <td>${row.cumulativeEvents}</td>
         <td>${row.messagesSent}</td>
       </tr>
     `;
@@ -392,7 +392,7 @@ app.get('/admin', async (req, res) => {
                                   <th>Active Users</th>
                                   <th>Target Active Users</th>
                                   <th>Progress vs Target</th>
-                                  <th>Events Added</th>
+                                  <th>Cumulative Birthdays/Annivs</th>
                                   <th>Messages Sent</th>
                               </tr>
                           </thead>

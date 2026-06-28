@@ -164,9 +164,14 @@ async function getHourlyTrendToday() {
 
 async function getTotalUsersCount() {
   try {
-    // Cumulative count starting from today (2026-01-31)
+    // Authoritative count = distinct phones across users + birthdays,
+    // matching the "All Users" table at the bottom of the admin page.
     const result = await pool.query(
-      `SELECT COUNT(*) FROM users WHERE created_at >= '2026-01-31'`
+      `SELECT COUNT(*) FROM (
+         SELECT phone FROM users
+         UNION
+         SELECT phone FROM birthdays
+       ) all_phones`
     );
     return parseInt(result.rows[0].count);
   } catch (err) {
@@ -832,6 +837,116 @@ async function getPostReminderEngagement() {
   }
 }
 
+// ── MONTHLY GROWTH METRICS ──
+// Builds a full 12-month table for the current year (including future/empty months)
+// to track progress toward the active-users goal (1000 active users in 6 months).
+async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) {
+  try {
+    const [newUsersRes, eventsRes, sentRes, sundayStats] = await Promise.all([
+      // New (first-seen) users per month, across users + birthdays phones
+      pool.query(`
+        WITH all_phones AS (
+          SELECT phone, created_at FROM users WHERE created_at IS NOT NULL
+          UNION ALL
+          SELECT phone, created_at FROM birthdays WHERE created_at IS NOT NULL
+        ),
+        first_seen AS (
+          SELECT phone, MIN(created_at) AS joined_at
+          FROM all_phones
+          GROUP BY phone
+        )
+        SELECT DATE_TRUNC('month', joined_at) AS month, COUNT(*) AS new_users
+        FROM first_seen
+        GROUP BY month
+      `),
+      // Events (birthdays + anniversaries) added per month
+      pool.query(`
+        SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS events
+        FROM birthdays
+        GROUP BY month
+      `),
+      // Outgoing messages sent per month
+      pool.query(`
+        SELECT DATE_TRUNC('month', created_at) AS month, COUNT(*) AS sent
+        FROM messages
+        WHERE direction = 'outgoing'
+        GROUP BY month
+      `),
+      // Active users = Sunday-reminder-eligible users (same definition as the KPI card).
+      // This is a point-in-time snapshot, so only the current month can be populated.
+      getSundayReminderStats()
+    ]);
+    const currentActiveUsers = sundayStats.active;
+
+    const monthKey = (val) => new Date(val).toISOString().slice(0, 7); // 'YYYY-MM'
+    const toMap = (rows, field) => {
+      const map = {};
+      rows.forEach(r => { map[monthKey(r.month)] = parseInt(r[field], 10) || 0; });
+      return map;
+    };
+
+    const newUsersMap = toMap(newUsersRes.rows, 'new_users');
+    const eventsMap = toMap(eventsRes.rows, 'events');
+    const sentMap = toMap(sentRes.rows, 'sent');
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const currentMonthIdx = now.getMonth();
+
+    // Cumulative users carried in from before this year
+    let cumulative = Object.entries(newUsersMap)
+      .filter(([k]) => k < `${year}-01`)
+      .reduce((sum, [, v]) => sum + v, 0);
+
+    // Baseline for the target curve = cumulative users through the current month
+    let baseline = cumulative;
+    for (let m = 0; m <= currentMonthIdx; m++) {
+      baseline += newUsersMap[`${year}-${String(m + 1).padStart(2, '0')}`] || 0;
+    }
+    const safeBaseline = Math.max(baseline, 1);
+    const growth = Math.pow(goalActiveUsers / safeBaseline, 1 / goalHorizonMonths);
+
+    const months = [];
+    for (let m = 0; m < 12; m++) {
+      const key = `${year}-${String(m + 1).padStart(2, '0')}`;
+      const newUsers = newUsersMap[key] || 0;
+      cumulative += newUsers;
+
+      // Active users uses the Sunday-reminder definition (current snapshot only).
+      // Historical eligibility can't be reconstructed, so non-current months are null.
+      const activeUsers = m === currentMonthIdx ? currentActiveUsers : null;
+
+      // Target active users: ramp from baseline (current month) to goal over the horizon
+      let target = null;
+      if (m >= currentMonthIdx) {
+        const k = m - currentMonthIdx;
+        target = Math.round(safeBaseline * Math.pow(growth, k));
+      }
+      const progress = activeUsers != null && target && target > 0
+        ? ((activeUsers / target) * 100).toFixed(1)
+        : null;
+
+      months.push({
+        label: new Date(year, m, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        isCurrent: m === currentMonthIdx,
+        isFuture: m > currentMonthIdx,
+        newUsers,
+        cumulativeUsers: cumulative,
+        activeUsers,
+        eventsAdded: eventsMap[key] || 0,
+        messagesSent: sentMap[key] || 0,
+        targetActiveUsers: target,
+        progress
+      });
+    }
+
+    return months;
+  } catch (err) {
+    console.error('Error in getMonthlyMetrics:', err);
+    return [];
+  }
+}
+
 module.exports = {
   getTotalMessagesAllTime,
   getFailuresByPhone,
@@ -845,6 +960,7 @@ module.exports = {
   getTotalEventsCount,
   getTotalAnniversariesCount,
   getEventsAddedToday,
+  getMonthlyMetrics,
   getWeeklyEventsTrend,
   getRecentMessageStatusTable,
   getUserEventSummaryTable,

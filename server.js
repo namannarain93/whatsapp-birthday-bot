@@ -64,6 +64,7 @@ app.get('/admin', async (req, res) => {
     const allEvents = await metrics.getAllEventsTable();
     const allUsers = await metrics.getAllUsersTable();
     const sundayReminderStats = await metrics.getSundayReminderStats();
+    const monthlyMetrics = await metrics.getMonthlyMetrics();
 
     // New metrics
     const onboardingFunnel = await metrics.getOnboardingFunnel();
@@ -206,6 +207,32 @@ app.get('/admin', async (req, res) => {
       </tr>
     `).join('');
 
+    const monthlyMetricRows = monthlyMetrics.map(row => {
+      const rowStyle = row.isCurrent
+        ? ' style="background: #eaf4fb; font-weight: 600;"'
+        : (row.isFuture ? ' style="color: #aaa;"' : '');
+      const target = row.targetActiveUsers != null ? row.targetActiveUsers.toLocaleString() : '—';
+      const activeUsers = row.activeUsers != null ? row.activeUsers : '—';
+      let progressCell = '—';
+      if (row.progress != null) {
+        const pct = parseFloat(row.progress);
+        const color = pct >= 100 ? '#27ae60' : (pct >= 50 ? '#e67e22' : '#e74c3c');
+        progressCell = `<span style="color: ${color}; font-weight: 600;">${row.progress}%</span>`;
+      }
+      return `
+      <tr${rowStyle}>
+        <td>${row.label}</td>
+        <td>${row.newUsers}</td>
+        <td>${row.cumulativeUsers}</td>
+        <td>${activeUsers}</td>
+        <td>${target}</td>
+        <td>${progressCell}</td>
+        <td>${row.eventsAdded}</td>
+        <td>${row.messagesSent}</td>
+      </tr>
+    `;
+    }).join('');
+
     const allEventRows = allEvents.map((row, i) => `
       <tr>
         <td>${i + 1}</td>
@@ -259,6 +286,11 @@ app.get('/admin', async (req, res) => {
                       <div class="value">${totalUsers}</div>
                   </div>
                   <div class="card">
+                      <h3>Active Users</h3>
+                      <div class="value">${sundayReminderStats.active}</div>
+                      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">receiving Sunday reminders</div>
+                  </div>
+                  <div class="card">
                       <h3>Stored Birthdays/Annivs</h3>
                       <div class="value">${totalEvents}</div>
                   </div>
@@ -267,13 +299,18 @@ app.get('/admin', async (req, res) => {
                       <div class="value">${totalAnniversaries}</div>
                   </div>
                   <div class="card">
+                      <h3>Total All-Time Messages</h3>
+                      <div class="value">${totalAllTime}</div>
+                  </div>
+              </div>
+
+              <!-- ── ENGAGEMENT & HEALTH ── -->
+              <h2 style="margin-top: 30px; color: #555;">Engagement & Health</h2>
+              <div class="cards">
+                  <div class="card">
                       <h3>Events Added Today</h3>
                       <div class="value">${eventsAddedToday.total}</div>
                       <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">${eventsAddedToday.birthdays} birthdays, ${eventsAddedToday.anniversaries} anniversaries</div>
-                  </div>
-                  <div class="card">
-                      <h3>Total All-Time Messages</h3>
-                      <div class="value">${totalAllTime}</div>
                   </div>
                   <div class="card">
                       <h3>Sent Today</h3>
@@ -287,11 +324,6 @@ app.get('/admin', async (req, res) => {
                       <h3>Failure Rate</h3>
                       <div class="value">${failureRate}%</div>
                   </div>
-              </div>
-
-              <!-- ── ENGAGEMENT & HEALTH ── -->
-              <h2 style="margin-top: 30px; color: #555;">Engagement & Health</h2>
-              <div class="cards">
                   <div class="card">
                       <h3>DAU (Today)</h3>
                       <div class="value">${dau}</div>
@@ -338,6 +370,33 @@ app.get('/admin', async (req, res) => {
                       <div class="value">${postReminderEngagement.engagementRate}%</div>
                       <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">${postReminderEngagement.engagedSends} / ${postReminderEngagement.totalReminderSends} responded within 24h</div>
                   </div>
+              </div>
+
+              <!-- ── MONTHLY GROWTH METRICS ── -->
+              <h2 style="margin-top: 30px; color: #555;">Monthly Metrics</h2>
+              <p style="color: #888; font-size: 0.85rem; margin-top: -8px;">
+                  Tracking toward <strong>1,000 active users</strong> (active = receiving Sunday reminders). Target ramps from the current
+                  month to the goal over 6 months; progress compares active users against that target. Active users is a live snapshot,
+                  so only the current month is populated (past months can't be reconstructed).
+              </p>
+              <div class="chart-container">
+                  <table>
+                      <thead>
+                          <tr>
+                              <th>Month</th>
+                              <th>New Users</th>
+                              <th>Cumulative Users</th>
+                              <th>Active Users</th>
+                              <th>Target Active Users</th>
+                              <th>Progress vs Target</th>
+                              <th>Events Added</th>
+                              <th>Messages Sent</th>
+                          </tr>
+                      </thead>
+                      <tbody>
+                          ${monthlyMetricRows || '<tr><td colspan="8">No data yet.</td></tr>'}
+                      </tbody>
+                  </table>
               </div>
 
               <div class="charts">

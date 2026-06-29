@@ -1,13 +1,13 @@
 const { pool } = require('./pool');
 
 // Admin Metrics: Save sent message
-async function saveSentMessage(wamid, phone, templateName = null) {
+async function saveSentMessage(wamid, phone, templateName = null, messageBody = null) {
   if (!wamid) return;
   await pool.query(
-    `INSERT INTO messages (wamid, recipient_phone, status, template_name, direction)
-     VALUES ($1, $2, 'sent', $3, 'outgoing')
+    `INSERT INTO messages (wamid, recipient_phone, status, template_name, direction, message_body)
+     VALUES ($1, $2, 'sent', $3, 'outgoing', $4)
      ON CONFLICT (wamid) DO NOTHING`,
-    [wamid, phone, templateName]
+    [wamid, phone, templateName, messageBody]
   );
 }
 

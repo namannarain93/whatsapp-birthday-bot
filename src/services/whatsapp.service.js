@@ -56,8 +56,8 @@ async function sendWhatsAppMessage(to, body) {
       timestamp: new Date().toISOString()
     }));
 
-    // Log to DB for admin metrics
-    await saveSentMessage(wamid, to);
+    // Log to DB for admin metrics (store the actual text body sent)
+    await saveSentMessage(wamid, to, null, body);
 
     return data;
   } catch (err) {
@@ -132,8 +132,12 @@ async function sendTemplateMessage(to, templateName, parametersArray = [], langu
       timestamp: new Date().toISOString()
     }));
 
-    // Log to DB for admin metrics
-    await saveSentMessage(wamid, to, templateName);
+    // Log to DB for admin metrics. Templates don't have a free-form body, so store a
+    // readable representation of the template + its parameters for the admin panel.
+    const templateBody = parametersArray.length > 0
+      ? `[Template: ${templateName}] ${parametersArray.join(' | ')}`
+      : `[Template: ${templateName}]`;
+    await saveSentMessage(wamid, to, templateName, templateBody);
 
     return data;
   } catch (err) {

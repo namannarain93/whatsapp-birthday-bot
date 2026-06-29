@@ -390,6 +390,48 @@ async function getRecentIncomingMessages(limit = 25) {
   }
 }
 
+async function getRecentOutgoingMessages(limit = 25) {
+  try {
+    const result = await pool.query(
+      `SELECT recipient_phone, message_body, template_name, status, created_at
+       FROM messages
+       WHERE direction = 'outgoing'
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    return result.rows.map(row => {
+      // Prefer the stored body; fall back to the template name for older rows
+      // that were logged before message bodies were captured.
+      let message = row.message_body;
+      if (!message) {
+        message = row.template_name ? `[Template: ${row.template_name}]` : '—';
+      }
+      return {
+        phone: row.recipient_phone || 'Unknown',
+        message,
+        status: row.status || 'sent',
+        timestamp: row.created_at
+          ? new Date(row.created_at).toLocaleString('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              year: 'numeric',
+              month: 'short',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              hour12: true
+            })
+          : 'Unknown'
+      };
+    });
+  } catch (err) {
+    console.error('Error in getRecentOutgoingMessages:', err);
+    return [];
+  }
+}
+
 async function getAllUsersTable() {
   try {
     const result = await pool.query(
@@ -992,6 +1034,7 @@ module.exports = {
   getRecentMessageStatusTable,
   getUserEventSummaryTable,
   getRecentIncomingMessages,
+  getRecentOutgoingMessages,
   getAllUsersTable,
   getSundayReminderStats,
   getAllEventsTable,

@@ -61,6 +61,7 @@ app.get('/admin', async (req, res) => {
     const recentMessages = await metrics.getRecentMessageStatusTable();
     const userEventSummary = await metrics.getUserEventSummaryTable();
     const recentIncoming = await metrics.getRecentIncomingMessages();
+    const recentOutgoing = await metrics.getRecentOutgoingMessages();
     const allEvents = await metrics.getAllEventsTable();
     const allUsers = await metrics.getAllUsersTable();
     const sundayReminderStats = await metrics.getSundayReminderStats();
@@ -187,6 +188,16 @@ app.get('/admin', async (req, res) => {
         <td>${i + 1}</td>
         <td>${row.phone}</td>
         <td>${row.message}</td>
+        <td>${row.timestamp}</td>
+      </tr>
+    `).join('');
+
+    const outgoingMessageRows = recentOutgoing.map((row, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${row.phone}</td>
+        <td>${row.message}</td>
+        <td>${row.status}</td>
         <td>${row.timestamp}</td>
       </tr>
     `).join('');
@@ -483,6 +494,23 @@ app.get('/admin', async (req, res) => {
                           </thead>
                           <tbody>
                               ${recentMessageRows || '<tr><td colspan="7">No outgoing messages yet.</td></tr>'}
+                          </tbody>
+                      </table>
+                  </div>
+                  <div class="chart-container" style="grid-column: span 2;">
+                      <h3>Last 25 Outgoing Messages (Sent Text)</h3>
+                      <table>
+                          <thead>
+                              <tr>
+                                  <th>#</th>
+                                  <th>Phone Number</th>
+                                  <th>Message</th>
+                                  <th>Status</th>
+                                  <th>Timestamp (IST)</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              ${outgoingMessageRows || '<tr><td colspan="5">No outgoing messages yet.</td></tr>'}
                           </tbody>
                       </table>
                   </div>

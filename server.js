@@ -25,6 +25,7 @@ const { dbReady } = require('./db.js');
 
 // Import job schedulers
 const { startReminderScheduler } = require('./src/jobs/reminder.job');
+const { startDayBeforeReminderScheduler } = require('./src/jobs/eventDetailsReminder.job');
 const { startDailyUpcomingReminderScheduler } = require('./src/jobs/dailyUpcomingReminder.job');
 const { startNewUserFollowupScheduler } = require('./src/jobs/newUserFollowup.job');
 const { startOnboardingNudgeScheduler } = require('./src/jobs/onboardingNudge.job');
@@ -868,8 +869,10 @@ app.listen(PORT, async () => {
   console.log('Bot is alive on port', PORT);
   // Wait for all DB migrations to finish before starting schedulers
   await dbReady;
-  // Start daily reminder scheduler
+  // Start daily reminder scheduler (day-of birthday/anniversary)
   startReminderScheduler();
+  // Start day-before reminder scheduler (event_details_reminder_2 at 9 AM the day before)
+  startDayBeforeReminderScheduler();
   // Start daily upcoming reminder scheduler
   startDailyUpcomingReminderScheduler();
   // Start new-user follow-up scheduler (8 PM nudge within 24h of signup)

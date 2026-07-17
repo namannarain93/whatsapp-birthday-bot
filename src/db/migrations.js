@@ -148,6 +148,17 @@ const dbReady = (async () => {
       ON birthday_reminder_log (phone, date, type);
     `);
     
+    // Create daily_summaries table for AI-generated daily metric summaries
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS daily_summaries (
+        id SERIAL PRIMARY KEY,
+        summary_date DATE NOT NULL UNIQUE,
+        summary_text TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log('✅ Daily summaries table ensured');
+    
     console.log('Database tables ready (Postgres)');
   } catch (err) {
     console.error('Error creating tables:', err);

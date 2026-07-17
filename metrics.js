@@ -1016,6 +1016,120 @@ async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) 
   }
 }
 
+// Compares the last 24 hours against the 24 hours before that,
+// used as input for the AI-generated daily summary.
+async function getDailySummarySnapshot() {
+  try {
+    const periodCompare = async (sqlWhere) => {
+      const result = await pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') AS current,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '48 hours'
+                             AND created_at <  NOW() - INTERVAL '24 hours') AS previous
+        FROM ${sqlWhere}
+      `);
+      return {
+        last24h: parseInt(result.rows[0].current) || 0,
+        previous24h: parseInt(result.rows[0].previous) || 0
+      };
+    };
+
+    const messagesSent = await periodCompare(`messages WHERE direction = 'outgoing'`);
+    const messagesReceived = await periodCompare(`messages WHERE direction = 'incoming'`);
+    const messagesFailed = await periodCompare(`messages WHERE status = 'failed'`);
+    const newUsers = await periodCompare(`users WHERE true`);
+    const eventsAdded = await periodCompare(`birthdays WHERE true`);
+    const remindersSent = await periodCompare(`birthday_reminder_log WHERE true`);
+    const unknownIntents = await periodCompare(`messages WHERE direction = 'incoming' AND intent = 'unknown'`);
+
+    // Active users (distinct incoming senders), last 24h vs previous 24h
+    const activeResult = await pool.query(`
+      SELECT
+        COUNT(DISTINCT recipient_phone) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') AS current,
+        COUNT(DISTINCT recipient_phone) FILTER (WHERE created_at >= NOW() - INTERVAL '48 hours'
+                                                  AND created_at <  NOW() - INTERVAL '24 hours') AS previous
+      FROM messages
+      WHERE direction = 'incoming'
+    `);
+    const activeUsers = {
+      last24h: parseInt(activeResult.rows[0].current) || 0,
+      previous24h: parseInt(activeResult.rows[0].previous) || 0
+    };
+
+    // Top failure error codes in the last 24 hours
+    const failureResult = await pool.query(`
+      SELECT error_code, COUNT(*) AS count
+      FROM messages
+      WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours'
+      GROUP BY error_code
+      ORDER BY count DESC
+      LIMIT 5
+    `);
+    const topFailures = failureResult.rows.map(r => ({
+      errorCode: r.error_code || 'Unknown',
+      count: parseInt(r.count) || 0
+    }));
+
+    // Intent distribution for incoming messages in the last 24 hours
+    const intentResult = await pool.query(`
+      SELECT COALESCE(intent, 'unparsed') AS intent, COUNT(*) AS count
+      FROM messages
+      WHERE direction = 'incoming' AND created_at >= NOW() - INTERVAL '24 hours'
+      GROUP BY intent
+      ORDER BY count DESC
+    `);
+    const intentDistribution = intentResult.rows.map(r => ({
+      intent: r.intent,
+      count: parseInt(r.count) || 0
+    }));
+
+    const totalsResult = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM users) AS total_users,
+        (SELECT COUNT(*) FROM birthdays) AS total_events
+    `);
+
+    return {
+      messagesSent,
+      messagesReceived,
+      messagesFailed,
+      newUsers,
+      eventsAdded,
+      remindersSent,
+      unknownIntents,
+      activeUsers,
+      topFailures,
+      intentDistribution,
+      totals: {
+        users: parseInt(totalsResult.rows[0].total_users) || 0,
+        events: parseInt(totalsResult.rows[0].total_events) || 0
+      }
+    };
+  } catch (err) {
+    console.error('Error in getDailySummarySnapshot:', err);
+    return null;
+  }
+}
+
+async function getLatestDailySummary() {
+  try {
+    const result = await pool.query(`
+      SELECT summary_date, summary_text
+      FROM daily_summaries
+      ORDER BY summary_date DESC
+      LIMIT 1
+    `);
+    if (result.rows.length === 0) return null;
+    return {
+      date: result.rows[0].summary_date,
+      text: result.rows[0].summary_text
+    };
+  } catch (err) {
+    console.error('Error in getLatestDailySummary:', err);
+    return null;
+  }
+}
+
 module.exports = {
   getTotalMessagesAllTime,
   getFailuresByPhone,
@@ -1053,5 +1167,8 @@ module.exports = {
   // Reminder effectiveness
   getRemindersSentToday,
   getReminderDeliveryRate,
-  getPostReminderEngagement
+  getPostReminderEngagement,
+  // AI daily summary
+  getDailySummarySnapshot,
+  getLatestDailySummary
 };

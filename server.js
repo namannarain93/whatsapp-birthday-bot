@@ -29,6 +29,7 @@ const { startDayBeforeReminderScheduler } = require('./src/jobs/eventDetailsRemi
 const { startDailyUpcomingReminderScheduler } = require('./src/jobs/dailyUpcomingReminder.job');
 const { startNewUserFollowupScheduler } = require('./src/jobs/newUserFollowup.job');
 const { startOnboardingNudgeScheduler } = require('./src/jobs/onboardingNudge.job');
+const { startDailySummaryScheduler } = require('./src/jobs/dailySummary.job');
 
 const app = express();
 
@@ -82,6 +83,7 @@ app.get('/admin', async (req, res) => {
     const reminderDeliveryRate = await metrics.getReminderDeliveryRate();
     const postReminderEngagement = await metrics.getPostReminderEngagement();
     const failuresByPhoneRaw = await metrics.getFailuresByPhone();
+    const latestDailySummary = await metrics.getLatestDailySummary();
 
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
@@ -256,6 +258,20 @@ app.get('/admin', async (req, res) => {
       </tr>
     `).join('');
 
+    // AI daily summary box (shown at top of dashboard)
+    const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const aiSummaryHtml = latestDailySummary
+      ? `
+          <div class="ai-summary">
+              <h3>🤖 Daily AI Summary <span class="ai-summary-date">${new Date(latestDailySummary.date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}</span></h3>
+              <p>${escapeHtml(latestDailySummary.text)}</p>
+          </div>`
+      : `
+          <div class="ai-summary">
+              <h3>🤖 Daily AI Summary</h3>
+              <p class="ai-summary-pending">No summary yet — the first one will be generated at 7:00 AM IST.</p>
+          </div>`;
+
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
@@ -286,11 +302,18 @@ app.get('/admin', async (req, res) => {
               .reminder-status-dormant { color: #95a5a6; }
               tr:nth-child(even) td { background: #fcfcfc; }
               .scrollable-table { max-height: 500px; overflow-y: auto; }
+              .ai-summary { background: white; border-left: 4px solid #3498db; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 30px; }
+              .ai-summary h3 { margin: 0 0 10px; color: #444; font-size: 1rem; }
+              .ai-summary-date { font-weight: normal; color: #888; font-size: 0.85rem; margin-left: 8px; }
+              .ai-summary p { margin: 0; line-height: 1.6; color: #333; }
+              .ai-summary-pending { color: #888; font-style: italic; }
           </style>
       </head>
       <body>
           <div class="container">
               <h1>Birthday Reminder Dashboard</h1>
+              
+              ${aiSummaryHtml}
               
               <div class="cards">
                   <div class="card">
@@ -879,4 +902,6 @@ app.listen(PORT, async () => {
   startNewUserFollowupScheduler();
   // Start onboarding nudge scheduler (5-min nudge for idle new users)
   startOnboardingNudgeScheduler();
+  // Start daily AI summary scheduler (generates dashboard summary at 7 AM IST)
+  startDailySummaryScheduler();
 });

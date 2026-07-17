@@ -89,19 +89,50 @@ async function getLast7DayTrend() {
   }
 }
 
-async function getFailureBreakdown() {
+// Failures grouped by Meta template and error code — powers the stacked
+// "Failure Breakdown by Template" chart. Any failed message that isn't one of the
+// tracked templates (or has no template_name) is bucketed into "Misc".
+const TRACKED_TEMPLATES = [
+  'event_details_reminder_2',
+  'birthday_reminder',
+  'weekly_birthday_reminders'
+];
+
+async function getFailureBreakdownByTemplate() {
   try {
     const result = await pool.query(
-      `SELECT error_code, COUNT(*)
+      `SELECT
+         CASE
+           WHEN template_name = ANY($1::text[]) THEN template_name
+           ELSE 'Misc'
+         END AS template_bucket,
+         COALESCE(error_code::text, 'Unknown') AS error_code,
+         COUNT(*) AS count
        FROM messages
        WHERE status = 'failed'
-       GROUP BY error_code
-       ORDER BY COUNT(*) DESC`
+       GROUP BY template_bucket, error_code`,
+      [TRACKED_TEMPLATES]
     );
-    return result.rows;
+
+    // Fixed column order for the X axis; Misc always last.
+    const templates = [...TRACKED_TEMPLATES, 'Misc'];
+    const templateIndex = {};
+    templates.forEach((t, i) => { templateIndex[t] = i; });
+
+    // Pivot into { errorCode -> [count per template bucket] }
+    const byCode = {};
+    result.rows.forEach(row => {
+      const code = row.error_code;
+      const idx = templateIndex[row.template_bucket];
+      if (idx == null) return;
+      if (!byCode[code]) byCode[code] = new Array(templates.length).fill(0);
+      byCode[code][idx] = parseInt(row.count, 10) || 0;
+    });
+
+    return { templates, byCode };
   } catch (err) {
-    console.error('Error in getFailureBreakdown:', err);
-    return [];
+    console.error('Error in getFailureBreakdownByTemplate:', err);
+    return { templates: [...TRACKED_TEMPLATES, 'Misc'], byCode: {} };
   }
 }
 
@@ -1137,7 +1168,7 @@ module.exports = {
   getFailedToday,
   getFailureRateToday,
   getLast7DayTrend,
-  getFailureBreakdown,
+  getFailureBreakdownByTemplate,
   getHourlyTrendToday,
   getTotalUsersCount,
   getTotalEventsCount,

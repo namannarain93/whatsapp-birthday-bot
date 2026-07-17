@@ -378,8 +378,8 @@ You are an analyst for a WhatsApp birthday & anniversary reminder bot.
 You will receive a JSON snapshot of the bot's metrics. Each metric has
 "last24h" (the last 24 hours) and "previous24h" (the 24 hours before that).
 
-Write a short daily summary (4-6 sentences, one paragraph, plain text) of how
-the metrics moved in the last 24 hours compared to the previous day.
+Write a short daily summary (4-6 bullet points) of how the metrics moved in
+the last 24 hours compared to the previous day.
 
 Rules:
 - Lead with the most significant change (biggest movement or anything concerning).
@@ -387,8 +387,10 @@ Rules:
 - Mention positives too: new users, events added, reminders delivered.
 - Use concrete numbers from the snapshot. Never invent numbers.
 - If both periods are zero for a metric, don't mention it.
-- If overall activity is very low, just say it was a quiet day and note the totals.
-- No markdown, no bullet points, no headings. Plain conversational prose.
+- If overall activity is very low, just note it was a quiet day and give the totals.
+- Format the output as a plain-text bullet list. Start each bullet on its own
+  line with "- " (a hyphen and a space). One concise sentence per bullet.
+- No headings, no bold/markdown emphasis, no numbering. Just the "- " bullets.
 `.trim(),
       },
       {

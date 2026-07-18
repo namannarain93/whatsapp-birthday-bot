@@ -1,5 +1,6 @@
 const { pool } = require('./db.js');
 const { getSundayReminderStatus } = require('./src/db/user.repository');
+const { resolvePhone } = require('./src/utils/telecomCircle');
 
 async function getTotalMessagesAllTime() {
   try {
@@ -1142,6 +1143,65 @@ async function getDailySummarySnapshot() {
   }
 }
 
+// ── GEO DISTRIBUTION (3D India map) ──
+// Maps every known phone to an Indian telecom circle (from the mobile prefix)
+// or a foreign country, and joins in per-phone outgoing message counts.
+async function getGeoDistribution() {
+  try {
+    const result = await pool.query(`
+      WITH all_phones AS (
+        SELECT phone FROM users
+        UNION
+        SELECT phone FROM birthdays
+      ),
+      msg_counts AS (
+        SELECT recipient_phone AS phone, COUNT(*) AS messages
+        FROM messages
+        WHERE direction = 'outgoing'
+        GROUP BY recipient_phone
+      )
+      SELECT ap.phone, COALESCE(mc.messages, 0) AS messages
+      FROM all_phones ap
+      LEFT JOIN msg_counts mc ON mc.phone = ap.phone
+    `);
+
+    const circles = {};
+    const international = {};
+    let unmappedIndia = 0;
+    let unknown = 0;
+
+    for (const row of result.rows) {
+      const messages = parseInt(row.messages, 10) || 0;
+      const loc = resolvePhone(row.phone);
+      if (loc.kind === 'india' && loc.code) {
+        if (!circles[loc.code]) {
+          circles[loc.code] = { code: loc.code, name: loc.name, coord: loc.coord, users: 0, messages: 0 };
+        }
+        circles[loc.code].users += 1;
+        circles[loc.code].messages += messages;
+      } else if (loc.kind === 'india') {
+        unmappedIndia += 1;
+      } else if (loc.kind === 'international') {
+        international[loc.country] = (international[loc.country] || 0) + 1;
+      } else {
+        unknown += 1;
+      }
+    }
+
+    return {
+      circles: Object.values(circles).sort((a, b) => b.users - a.users),
+      international: Object.entries(international)
+        .map(([country, users]) => ({ country, users }))
+        .sort((a, b) => b.users - a.users),
+      unmappedIndia,
+      unknown
+    };
+  } catch (err) {
+    console.error('Error in getGeoDistribution:', err);
+    return { circles: [], international: [], unmappedIndia: 0, unknown: 0 };
+  }
+}
+
 async function getLatestDailySummary() {
   try {
     const result = await pool.query(`
@@ -1201,5 +1261,7 @@ module.exports = {
   getPostReminderEngagement,
   // AI daily summary
   getDailySummarySnapshot,
-  getLatestDailySummary
+  getLatestDailySummary,
+  // Geo distribution (3D India map)
+  getGeoDistribution
 };

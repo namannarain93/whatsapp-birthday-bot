@@ -15,6 +15,7 @@ if (missingVars.length > 0) {
 }
 
 const express = require('express');
+const path = require('path');
 const XLSX = require('xlsx');
 const webhookRoutes = require('./src/routes/webhook.routes');
 const { sendTemplateMessage } = require('./src/services/whatsapp.service');
@@ -44,6 +45,12 @@ app.use(express.json());
 
 // Register webhook routes
 app.use('/', webhookRoutes);
+
+// India states GeoJSON for the 3D map (static, cacheable)
+app.get('/admin/geo/india-states.json', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile(path.join(__dirname, 'src/data/india-states.json'));
+});
 
 // Admin dashboard route
 app.get('/admin', async (req, res) => {
@@ -84,6 +91,8 @@ app.get('/admin', async (req, res) => {
     const postReminderEngagement = await metrics.getPostReminderEngagement();
     const failuresByPhoneRaw = await metrics.getFailuresByPhone();
     const latestDailySummary = await metrics.getLatestDailySummary();
+    const geoDistribution = await metrics.getGeoDistribution();
+    const geoDistributionJson = JSON.stringify(geoDistribution);
 
     const trendLabels = JSON.stringify(trend.map(t => new Date(t.day).toLocaleDateString()));
     const trendData = JSON.stringify(trend.map(t => parseInt(t.count)));
@@ -326,6 +335,8 @@ app.get('/admin', async (req, res) => {
               })();
           </script>
           <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+          <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+          <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
           <style>
               /* ── THEME TOKENS ── */
               :root {
@@ -397,6 +408,8 @@ app.get('/admin', async (req, res) => {
               .ai-summary ul li { margin-bottom: 6px; }
               .ai-summary ul li:last-child { margin-bottom: 0; }
               .ai-summary-pending { color: var(--text-muted); font-style: italic; }
+              .geo-caption { color: var(--text-muted); font-size: 0.85rem; margin: 0 0 6px; }
+              #indiaMap { height: 560px; }
 
               /* ── MOBILE ── */
               @media (max-width: 640px) {
@@ -417,6 +430,7 @@ app.get('/admin', async (req, res) => {
                   .chart-container table, .scrollable-table table { min-width: 560px; }
                   .scrollable-table { overflow-x: auto; -webkit-overflow-scrolling: touch; }
                   th, td { padding: 8px; font-size: 0.85rem; }
+                  #indiaMap { height: 380px; }
               }
           </style>
       </head>
@@ -522,6 +536,19 @@ app.get('/admin', async (req, res) => {
                       <div class="value">${sundayReminderStats.active}</div>
                       <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">${sundayReminderStats.dormant} dormant · ${sundayReminderStats.total} total</div>
                   </div>
+              </div>
+
+              <!-- ── GEOGRAPHY ── -->
+              <h2 style="margin-top: 30px; color: var(--text-subheading);">Where Your Users Are</h2>
+              <div class="chart-container" style="margin-bottom: 20px;">
+                  <h3>User Distribution Across India (3D)</h3>
+                  <p class="geo-caption">
+                      Inferred from each number's mobile prefix (telecom circle), so it reflects where the
+                      number was issued — ~90% accurate due to number portability. Column height = users;
+                      drag to rotate, scroll to zoom.
+                  </p>
+                  <div id="indiaMap"></div>
+                  <p id="geoFootnote" class="geo-caption" style="margin-top: 8px;"></p>
               </div>
 
               <!-- ── MONTHLY GROWTH METRICS ── -->
@@ -754,7 +781,135 @@ app.get('/admin', async (req, res) => {
                       const c = Chart.getChart(id);
                       if (c) c.update();
                   });
+                  initIndiaMap();
               }
+
+              // ── 3D INDIA MAP (ECharts GL) ──
+              const GEO_DATA = ${geoDistributionJson};
+              let indiaMapChart = null;
+              let indiaMapRegistered = false;
+
+              function initIndiaMap() {
+                  const el = document.getElementById('indiaMap');
+                  if (!el || !window.echarts || !indiaMapRegistered) return;
+                  if (indiaMapChart) { indiaMapChart.dispose(); indiaMapChart = null; }
+
+                  const dark = isDarkTheme();
+                  const surface = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+                  const maxUsers = Math.max(1, ...GEO_DATA.circles.map(c => c.users));
+                  const barData = GEO_DATA.circles.map(c => ({
+                      name: c.name,
+                      value: [c.coord[0], c.coord[1], c.users],
+                      messages: c.messages
+                  }));
+
+                  indiaMapChart = echarts.init(el);
+                  indiaMapChart.setOption({
+                      tooltip: {
+                          backgroundColor: dark ? '#232a33' : '#ffffff',
+                          borderColor: dark ? '#30363d' : '#eee',
+                          textStyle: { color: dark ? '#c9d1d9' : '#333' }
+                      },
+                      visualMap: {
+                          show: false,
+                          min: 0,
+                          max: maxUsers,
+                          dimension: 2,
+                          seriesIndex: 0,
+                          inRange: {
+                              color: dark
+                                  ? ['#1f6feb', '#58a6ff', '#bc8cff', '#f778ba']
+                                  : ['#3498db', '#9b59b6', '#e74c3c']
+                          }
+                      },
+                      geo3D: {
+                          map: 'india',
+                          shading: 'lambert',
+                          environment: surface,
+                          itemStyle: {
+                              color: dark ? '#22303f' : '#dbe7f0',
+                              borderWidth: 0.6,
+                              borderColor: dark ? '#4a5a6d' : '#ffffff'
+                          },
+                          emphasis: {
+                              itemStyle: { color: dark ? '#2e4258' : '#c3d9ea' },
+                              label: { show: false }
+                          },
+                          regionHeight: 1.2,
+                          boxHeight: 22,
+                          light: {
+                              main: { intensity: 1.1, shadow: true, shadowQuality: 'medium', alpha: 55 },
+                              ambient: { intensity: 0.35 }
+                          },
+                          viewControl: {
+                              autoRotate: true,
+                              autoRotateSpeed: 4,
+                              autoRotateAfterStill: 4,
+                              distance: 72,
+                              alpha: 42,
+                              beta: 0,
+                              minAlpha: 15,
+                              minDistance: 40,
+                              maxDistance: 200,
+                              panSensitivity: 1,
+                              rotateSensitivity: 1.5
+                          }
+                      },
+                      series: [{
+                          type: 'bar3D',
+                          coordinateSystem: 'geo3D',
+                          shading: 'lambert',
+                          barSize: 1.6,
+                          minHeight: 2,
+                          bevelSize: 0.4,
+                          data: barData,
+                          label: { show: false },
+                          emphasis: {
+                              label: {
+                                  show: true,
+                                  backgroundColor: dark ? '#232a33' : '#ffffff',
+                                  color: dark ? '#e6edf3' : '#333',
+                                  padding: 6,
+                                  borderRadius: 4,
+                                  formatter: function (p) {
+                                      return p.name + '\\n' + p.value[2] + ' users · ' + p.data.messages + ' msgs';
+                                  }
+                              }
+                          }
+                      }]
+                  });
+              }
+
+              fetch('/admin/geo/india-states.json')
+                  .then(function (r) { return r.json(); })
+                  .then(function (geo) {
+                      echarts.registerMap('india', geo);
+                      indiaMapRegistered = true;
+                      initIndiaMap();
+                  })
+                  .catch(function (e) {
+                      const el = document.getElementById('indiaMap');
+                      if (el) el.innerHTML = '<p class="geo-caption">Could not load India map data.</p>';
+                      console.error('India map load failed:', e);
+                  });
+
+              window.addEventListener('resize', function () {
+                  if (indiaMapChart) indiaMapChart.resize();
+              });
+
+              // Footnote: top circles + international + unmapped counts
+              (function () {
+                  const el = document.getElementById('geoFootnote');
+                  if (!el) return;
+                  const parts = [];
+                  const top = GEO_DATA.circles.slice(0, 3).map(function (c) { return c.name + ' (' + c.users + ')'; });
+                  if (top.length) parts.push('Top circles: ' + top.join(' · '));
+                  if (GEO_DATA.international.length) {
+                      parts.push('Outside India: ' + GEO_DATA.international.map(function (i) { return i.country + ' (' + i.users + ')'; }).join(' · '));
+                  }
+                  if (GEO_DATA.unmappedIndia) parts.push(GEO_DATA.unmappedIndia + ' Indian numbers with unmapped prefixes');
+                  el.textContent = parts.join('  |  ');
+              })();
 
               new Chart(document.getElementById('hourlyChart'), {
                   type: 'bar',

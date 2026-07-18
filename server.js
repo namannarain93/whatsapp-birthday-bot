@@ -32,6 +32,15 @@ const { startNewUserFollowupScheduler } = require('./src/jobs/newUserFollowup.jo
 const { startOnboardingNudgeScheduler } = require('./src/jobs/onboardingNudge.job');
 const { startDailySummaryScheduler } = require('./src/jobs/dailySummary.job');
 
+const DASHBOARD_THEMES = [
+  { id: 'light', label: '☀️ Light', dark: false },
+  { id: 'dark', label: '🌙 Dark', dark: true },
+  { id: 'zen', label: '🪷 Zen Garden', dark: false },
+  { id: 'vault', label: '🟩 Vault', dark: true },
+  { id: 'candy', label: '🍬 Candy Pop', dark: false }
+];
+const DASHBOARD_THEME_IDS = DASHBOARD_THEMES.map(theme => theme.id);
+
 const app = express();
 
 // Request logging middleware
@@ -325,9 +334,12 @@ app.get('/admin', async (req, res) => {
           <script>
               // Apply saved/system theme before first paint to avoid a flash.
               (function () {
+                  var THEMES = ${JSON.stringify(DASHBOARD_THEME_IDS)};
                   try {
                       var stored = localStorage.getItem('dashboard-theme');
-                      var theme = stored || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+                      var theme = THEMES.indexOf(stored) !== -1
+                          ? stored
+                          : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
                       document.documentElement.setAttribute('data-theme', theme);
                   } catch (e) {
                       document.documentElement.setAttribute('data-theme', 'light');
@@ -338,8 +350,14 @@ app.get('/admin', async (req, res) => {
           <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
           <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
           <style>
-              /* ── THEME TOKENS ── */
+              /* ── THEME TOKENS ──
+                 Each theme overrides colors AND widget design: surface treatment
+                 (--card-*), accent bar (--panel-accent), table header (--th-bg),
+                 shape (--radius) and type (--font-*). */
               :root {
+                  --radius: 16px;
+                  --font-body: -apple-system, 'Segoe UI', Roboto, sans-serif;
+                  --font-heading: inherit;
                   --bg: #f4f7f6;
                   --surface: #ffffff;
                   --surface-alt: #fafafa;
@@ -348,7 +366,7 @@ app.get('/admin', async (req, res) => {
                   --text: #333;
                   --text-heading: #444;
                   --text-subheading: #555;
-                  --text-muted: #888;
+                  --text-muted: #6b7280;
                   --text-faint: #aaa;
                   --text-strong: #222;
                   --border: #eee;
@@ -356,42 +374,225 @@ app.get('/admin', async (req, res) => {
                   --danger: #e74c3c;
                   --shadow: rgba(0,0,0,0.1);
                   --current-row-highlight: #eaf4fb;
+                  /* widget design */
+                  --card-bg: #ffffff;
+                  --card-border: #e9edf0;
+                  --card-border-width: 1px;
+                  --card-border-hover: #cfdae2;
+                  --card-shadow: 0 1px 2px rgba(16,24,40,0.05), 0 10px 24px -14px rgba(16,24,40,0.14);
+                  --card-hover-shadow: 0 2px 4px rgba(16,24,40,0.06), 0 18px 34px -14px rgba(16,24,40,0.22);
+                  --card-lift: translateY(-3px);
+                  --panel-accent: linear-gradient(90deg, var(--accent), transparent 70%);
+                  --panel-accent-h: 2px;
+                  --th-bg: #f7f9fa;
+                  --value-font-weight: 700;
               }
+              /* ── DARK: sleek glass — smoky gradients, frosted borders, soft glow ── */
               [data-theme="dark"] {
-                  --bg: #12161c;
+                  --radius: 18px;
+                  --bg: #101216;
                   --surface: #1c2128;
-                  --surface-alt: #232a33;
-                  --surface-hover: #2b333d;
-                  --row-even: #1f252d;
+                  --surface-alt: rgba(255,255,255,0.04);
+                  --surface-hover: rgba(255,255,255,0.08);
+                  --row-even: rgba(255,255,255,0.025);
                   --text: #c9d1d9;
-                  --text-heading: #e6edf3;
+                  --text-heading: #f2f4f7;
                   --text-subheading: #adbac7;
                   --text-muted: #8b949e;
                   --text-faint: #6e7681;
-                  --text-strong: #f0f6fc;
-                  --border: #30363d;
-                  --accent: #58a6ff;
+                  --text-strong: #ffffff;
+                  --border: rgba(255,255,255,0.09);
+                  --accent: #e8a34c;
                   --danger: #f85149;
-                  --shadow: rgba(0,0,0,0.4);
-                  --current-row-highlight: #1b3346;
+                  --shadow: rgba(0,0,0,0.45);
+                  --current-row-highlight: rgba(232,163,76,0.10);
+                  --card-bg: linear-gradient(160deg, rgba(255,255,255,0.085) 0%, rgba(255,255,255,0.03) 45%, rgba(255,255,255,0.015) 100%);
+                  --card-border: rgba(255,255,255,0.10);
+                  --card-border-width: 1px;
+                  --card-border-hover: rgba(232,163,76,0.45);
+                  --card-shadow: inset 0 1px 0 rgba(255,255,255,0.09), 0 18px 40px -18px rgba(0,0,0,0.7);
+                  --card-hover-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 24px 48px -18px rgba(0,0,0,0.8), 0 0 24px -8px rgba(232,163,76,0.25);
+                  --card-lift: translateY(-3px);
+                  --panel-accent: linear-gradient(90deg, rgba(232,163,76,0.9), rgba(232,163,76,0) 65%);
+                  --panel-accent-h: 2px;
+                  --th-bg: #232931;
+                  --value-font-weight: 600;
               }
-              body { font-family: sans-serif; background: var(--bg); margin: 0; padding: 20px; color: var(--text); transition: background 0.2s ease, color 0.2s ease; }
+              [data-theme="dark"] body {
+                  background-image: radial-gradient(ellipse 900px 500px at 75% -10%, rgba(120,90,60,0.28) 0%, transparent 60%),
+                                    radial-gradient(ellipse 700px 500px at 0% 100%, rgba(45,55,75,0.5) 0%, transparent 55%);
+              }
+              [data-theme="dark"] h1 { font-weight: 600; letter-spacing: -0.02em; }
+              [data-theme="dark"] .card, [data-theme="dark"] .chart-container, [data-theme="dark"] .ai-summary { backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+              [data-theme="dark"] .card:not(.fail) .value { background: linear-gradient(180deg, #ffffff 30%, #b9c2cc 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+              /* ── ZEN: gilded stillness — warm sand, soft gold, serif calm ── */
+              [data-theme="zen"] {
+                  --radius: 14px;
+                  --font-body: Georgia, 'Times New Roman', serif;
+                  --font-heading: Georgia, 'Times New Roman', serif;
+                  --bg: #e8e1d1;
+                  --surface: #f6f1e5;
+                  --surface-alt: #efe8d8;
+                  --surface-hover: #e9e0cc;
+                  --row-even: #f1ebdd;
+                  --text: #4c4437;
+                  --text-heading: #3a3226;
+                  --text-subheading: #5c5344;
+                  --text-muted: #6f6758;
+                  --text-faint: #aca391;
+                  --text-strong: #2e2719;
+                  --border: #d9cfb9;
+                  --accent: #a8823c;
+                  --danger: #b0492f;
+                  --shadow: rgba(94, 80, 50, 0.18);
+                  --current-row-highlight: #ece2c8;
+                  --card-bg: linear-gradient(165deg, #faf6ec 0%, #f3ecdc 100%);
+                  --card-border: #decf9f;
+                  --card-border-width: 1px;
+                  --card-border-hover: #c2a35c;
+                  --card-shadow: inset 0 1px 0 rgba(255,252,240,0.9), 0 10px 26px -14px rgba(94,80,50,0.45);
+                  --card-hover-shadow: inset 0 1px 0 rgba(255,252,240,0.9), 0 16px 32px -14px rgba(94,80,50,0.55);
+                  --card-lift: translateY(-2px);
+                  --panel-accent: linear-gradient(90deg, transparent, #c2a35c 50%, transparent);
+                  --panel-accent-h: 1px;
+                  --th-bg: #efe6cf;
+                  --value-font-weight: 500;
+              }
+              [data-theme="zen"] body {
+                  background-image: radial-gradient(ellipse at 20% 0%, #f0e9d8 0%, transparent 55%),
+                                    radial-gradient(ellipse at 90% 100%, #ded4bd 0%, transparent 50%);
+              }
+              [data-theme="zen"] h1 { font-weight: 400; letter-spacing: 0.03em; font-style: italic; }
+              /* Gilded frame: thin gold double border, centered ornament dot */
+              [data-theme="zen"] .card, [data-theme="zen"] .chart-container, [data-theme="zen"] .ai-summary { outline: 1px solid rgba(168,130,60,0.28); outline-offset: -6px; }
+              [data-theme="zen"] .card h3 { letter-spacing: 0.18em; font-size: 0.72rem; }
+              [data-theme="zen"] .card .value { font-style: italic; color: #7a5f28; }
+              [data-theme="zen"] th { text-transform: uppercase; letter-spacing: 0.1em; font-size: 0.78rem; }
+              /* ── VAULT: brutalist neon — black steel, electric green, mono type ── */
+              [data-theme="vault"] {
+                  --radius: 0px;
+                  --font-body: 'Courier New', ui-monospace, monospace;
+                  --font-heading: 'Courier New', ui-monospace, monospace;
+                  --bg: #0b0d0b;
+                  --surface: #141714;
+                  --surface-alt: #1b1f1b;
+                  --surface-hover: #232823;
+                  --row-even: #181c18;
+                  --text: #c4d2c5;
+                  --text-heading: #3dfc6e;
+                  --text-subheading: #9be8ac;
+                  --text-muted: #7c8f7e;
+                  --text-faint: #5a685c;
+                  --text-strong: #eafcee;
+                  --border: #2c352d;
+                  --accent: #3dfc6e;
+                  --danger: #ff5c47;
+                  --shadow: rgba(61, 252, 110, 0.08);
+                  --current-row-highlight: #14261a;
+                  --card-bg: linear-gradient(180deg, #161a16 0%, #101410 100%);
+                  --card-border: #2c352d;
+                  --card-border-width: 1px;
+                  --card-border-hover: #3dfc6e;
+                  --card-shadow: 0 0 0 1px rgba(61,252,110,0.06), 4px 4px 0 0 rgba(61,252,110,0.10);
+                  --card-hover-shadow: 0 0 0 1px rgba(61,252,110,0.25), 6px 6px 0 0 rgba(61,252,110,0.18), 0 0 26px -6px rgba(61,252,110,0.35);
+                  --card-lift: translate(-2px, -2px);
+                  --panel-accent: repeating-linear-gradient(90deg, #3dfc6e 0 8px, transparent 8px 14px);
+                  --panel-accent-h: 2px;
+                  --th-bg: #10160f;
+                  --value-font-weight: 700;
+              }
+              [data-theme="vault"] body {
+                  background-image: repeating-linear-gradient(0deg, transparent 0 3px, rgba(61,252,110,0.012) 3px 4px);
+              }
+              [data-theme="vault"] h1, [data-theme="vault"] h2, [data-theme="vault"] h3 { text-transform: uppercase; letter-spacing: 0.12em; }
+              [data-theme="vault"] h1 { text-shadow: 0 0 18px rgba(61,252,110,0.45); }
+              /* Terminal frame: bracket corners on KPI cards */
+              [data-theme="vault"] .card::after { content: ''; position: absolute; inset: 5px; border: 1px solid rgba(61,252,110,0.12); pointer-events: none; clip-path: polygon(0 0, 14px 0, 14px 1px, 1px 1px, 1px 14px, 0 14px, 0 0, 100% 0, 100% 14px, calc(100% - 1px) 14px, calc(100% - 1px) 1px, calc(100% - 14px) 1px, calc(100% - 14px) 0, 100% 0, 100% 100%, calc(100% - 14px) 100%, calc(100% - 14px) calc(100% - 1px), calc(100% - 1px) calc(100% - 1px), calc(100% - 1px) calc(100% - 14px), 100% calc(100% - 14px), 100% 100%, 0 100%, 0 calc(100% - 14px), 1px calc(100% - 14px), 1px calc(100% - 1px), 14px calc(100% - 1px), 14px 100%, 0 100%); }
+              [data-theme="vault"] .card .value { color: #3dfc6e; text-shadow: 0 0 12px rgba(61,252,110,0.5); }
+              [data-theme="vault"] .card.fail .value { color: var(--danger); text-shadow: 0 0 12px rgba(255,92,71,0.5); }
+              [data-theme="vault"] .card h3::before, [data-theme="vault"] h2::before { content: '// '; color: var(--text-faint); }
+              [data-theme="vault"] th { border-bottom: 1px solid rgba(61,252,110,0.25); }
+              /* ── CANDY: playful pop — bubblegum pink, mint, rounded corners ── */
+              [data-theme="candy"] {
+                  --radius: 20px;
+                  --font-body: 'Trebuchet MS', 'Segoe UI', sans-serif;
+                  --font-heading: 'Trebuchet MS', 'Segoe UI', sans-serif;
+                  --bg: #f7c5df;
+                  --surface: #fffafd;
+                  --surface-alt: #fdeaf4;
+                  --surface-hover: #fadeee;
+                  --row-even: #fef2f8;
+                  --text: #53355c;
+                  --text-heading: #8a2f7a;
+                  --text-subheading: #6d4478;
+                  --text-muted: #805c7d;
+                  --text-faint: #c39fbe;
+                  --text-strong: #3f1f47;
+                  --border: #f3d3e6;
+                  --accent: #17b8a6;
+                  --danger: #e8467c;
+                  --shadow: rgba(138, 47, 122, 0.14);
+                  --current-row-highlight: #dff5ef;
+                  --card-bg: linear-gradient(170deg, #ffffff 0%, #fff3fa 100%);
+                  --card-border: #ffffff;
+                  --card-border-width: 2px;
+                  --card-border-hover: #17b8a6;
+                  --card-shadow: 0 6px 0 -2px rgba(138,47,122,0.10), 0 14px 30px -12px rgba(138,47,122,0.30);
+                  --card-hover-shadow: 0 9px 0 -2px rgba(23,184,166,0.25), 0 20px 36px -12px rgba(138,47,122,0.38);
+                  --card-lift: translateY(-4px) rotate(-0.4deg);
+                  --panel-accent: linear-gradient(90deg, #f77fbe, #ffd166 35%, #17b8a6 70%, #9b8cff);
+                  --panel-accent-h: 5px;
+                  --th-bg: #fdeaf4;
+                  --value-font-weight: 800;
+              }
+              [data-theme="candy"] body {
+                  background-image: radial-gradient(circle at 15% 20%, #b7ecd9 0%, transparent 40%),
+                                    radial-gradient(circle at 85% 80%, #f9a8cf 0%, transparent 45%);
+              }
+              [data-theme="candy"] h1 { color: #8a2f7a; }
+              [data-theme="candy"] .card:not(.fail) .value { background: linear-gradient(135deg, #e8467c, #8a2f7a); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+              [data-theme="candy"] .card h3 { color: #85527f; font-weight: 700; }
+              [data-theme="candy"] th { color: #8a2f7a; border-bottom: 2px solid #f6c7e2; }
+              [data-theme="candy"] tr:nth-child(even) td { background: #fdf3f9; }
+              body { font-family: var(--font-body); background: var(--bg); background-attachment: fixed; box-sizing: border-box; min-height: 100vh; margin: 0; padding: 20px; color: var(--text); transition: background 0.2s ease, color 0.2s ease; }
               .container { max-width: 1000px; margin: 0 auto; }
+              h1, h2, h3 { font-family: var(--font-heading); }
               h1 { color: var(--text-heading); }
-              /* ── THEME TOGGLE ── */
+              /* ── THEME PICKER ── */
               .dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-              .theme-toggle { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: 0 2px 4px var(--shadow); border-radius: 999px; padding: 8px 14px; font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease; }
-              .theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+              .theme-select { appearance: none; -webkit-appearance: none; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: 0 2px 4px var(--shadow); border-radius: 999px; padding: 8px 34px 8px 14px; font-size: 0.9rem; font-weight: 600; font-family: var(--font-body); cursor: pointer; transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
+              .theme-select:hover { border-color: var(--accent); color: var(--accent); }
+              /* ── WIDGETS ── */
               .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px; }
-              .card { background: var(--surface); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px var(--shadow); text-align: center; }
-              .card h3 { margin: 0; color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase; }
-              .card .value { font-size: 2rem; font-weight: bold; margin-top: 10px; color: var(--text-strong); }
+              .card, .chart-container, .ai-summary {
+                  position: relative;
+                  overflow: hidden;
+                  background: var(--card-bg);
+                  border: var(--card-border-width) solid var(--card-border);
+                  border-radius: var(--radius);
+                  box-shadow: var(--card-shadow);
+                  transition: transform 0.2s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.2s ease;
+              }
+              .card { padding: 20px; text-align: center; }
+              .card:hover { transform: var(--card-lift); box-shadow: var(--card-hover-shadow); border-color: var(--card-border-hover); }
+              .card h3 { margin: 0; color: var(--text-muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; }
+              .card .value { font-size: 2rem; font-weight: var(--value-font-weight); margin-top: 10px; color: var(--text-strong); }
               .card.fail .value { color: var(--danger); }
               .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
-              .chart-container { background: var(--surface); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px var(--shadow); }
+              .chart-container { padding: 20px; }
+              /* Signature accent bar along the top edge of every panel */
+              .chart-container::before, .ai-summary::before {
+                  content: '';
+                  position: absolute;
+                  top: 0; left: 0; right: 0;
+                  height: var(--panel-accent-h);
+                  background: var(--panel-accent);
+                  pointer-events: none;
+              }
+              .chart-container:hover { border-color: var(--card-border-hover); box-shadow: var(--card-hover-shadow); }
               table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.95rem; }
               th, td { text-align: left; padding: 10px; border-bottom: 1px solid var(--border); }
-              th { background: var(--surface-alt); font-weight: 600; color: var(--text-subheading); }
+              th { background: var(--th-bg); font-weight: 600; color: var(--text-subheading); position: sticky; top: 0; z-index: 1; }
               th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
               th.sortable:hover { background: var(--surface-hover); color: var(--text-strong); }
               th.sortable .sort-indicator { font-size: 0.75rem; color: var(--accent); }
@@ -400,7 +601,7 @@ app.get('/admin', async (req, res) => {
               .reminder-status-dormant { color: #95a5a6; }
               tr:nth-child(even) td { background: var(--row-even); }
               .scrollable-table { max-height: 500px; overflow-y: auto; }
-              .ai-summary { background: var(--surface); border-left: 4px solid var(--accent); padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px var(--shadow); margin-bottom: 30px; }
+              .ai-summary { padding: 20px; margin-bottom: 30px; }
               .ai-summary h3 { margin: 0 0 10px; color: var(--text-heading); font-size: 1rem; }
               .ai-summary-date { font-weight: normal; color: var(--text-muted); font-size: 0.85rem; margin-left: 8px; }
               .ai-summary p { margin: 0; line-height: 1.6; color: var(--text); }
@@ -438,10 +639,9 @@ app.get('/admin', async (req, res) => {
           <div class="container">
               <div class="dashboard-header">
                   <h1>Birthday Reminder Dashboard</h1>
-                  <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle dark mode">
-                      <span id="themeToggleIcon">🌙</span>
-                      <span id="themeToggleLabel">Dark</span>
-                  </button>
+                  <select id="themeSelect" class="theme-select" aria-label="Select design theme">
+                      ${DASHBOARD_THEMES.map(theme => `<option value="${theme.id}">${theme.label}</option>`).join('')}
+                  </select>
               </div>
               
               ${aiSummaryHtml}
@@ -764,8 +964,23 @@ app.get('/admin', async (req, res) => {
 
           <script>
               // ── THEME-AWARE CHARTS ──
+              const DARK_THEMES = ${JSON.stringify(DASHBOARD_THEMES.filter(theme => theme.dark).map(theme => theme.id))};
+              const THEME_CHART_PALETTES = {
+                  light: ['#2563eb', '#16a34a', '#dc2626', '#d97706', '#7c3aed', '#0891b2'],
+                  dark: ['#e8a34c', '#60a5fa', '#34d399', '#f87171', '#c084fc', '#fbbf24'],
+                  zen: ['#a8823c', '#6f7f52', '#a8583c', '#76628a', '#4f7f78', '#c09a58'],
+                  vault: ['#3dfc6e', '#31c9ff', '#ff5c47', '#f5e642', '#bd67ff', '#42f5d1'],
+                  candy: ['#e8467c', '#17b8a6', '#8a2f7a', '#f2a93b', '#7d70e8', '#ef6cb5']
+              };
+              function currentTheme() {
+                  return document.documentElement.getAttribute('data-theme') || 'light';
+              }
+              function currentChartPalette() {
+                  return THEME_CHART_PALETTES[currentTheme()] || THEME_CHART_PALETTES.light;
+              }
               function isDarkTheme() {
-                  return document.documentElement.getAttribute('data-theme') === 'dark';
+                  // Charts only need to know light-vs-dark contrast, not the exact palette.
+                  return DARK_THEMES.indexOf(currentTheme()) !== -1;
               }
               function applyChartDefaults() {
                   // Reuse the CSS theme token so chart text always matches the page.
@@ -777,9 +992,18 @@ app.get('/admin', async (req, res) => {
               const themedChartIds = ['hourlyChart', 'trendChart', 'failureChart', 'weeklyEventsChart', 'dauTrendChart', 'onboardingFunnelChart', 'intentChart'];
               function restyleCharts() {
                   applyChartDefaults();
+                  const palette = currentChartPalette();
                   themedChartIds.forEach(function (id) {
                       const c = Chart.getChart(id);
-                      if (c) c.update();
+                      if (!c) return;
+                      c.data.datasets.forEach(function (dataset, datasetIndex) {
+                          const color = palette[datasetIndex % palette.length];
+                          dataset.borderColor = color;
+                          dataset.backgroundColor = Array.isArray(dataset.backgroundColor)
+                              ? dataset.data.map(function (_, pointIndex) { return palette[pointIndex % palette.length]; })
+                              : (dataset.fill ? color + '26' : color);
+                      });
+                      c.update();
                   });
                   initIndiaMap();
               }
@@ -794,8 +1018,14 @@ app.get('/admin', async (req, res) => {
                   if (!el || !window.echarts || !indiaMapRegistered) return;
                   if (indiaMapChart) { indiaMapChart.dispose(); indiaMapChart = null; }
 
-                  const dark = isDarkTheme();
-                  const surface = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+                  const styles = getComputedStyle(document.documentElement);
+                  const surface = styles.getPropertyValue('--surface').trim();
+                  const surfaceAlt = styles.getPropertyValue('--surface-alt').trim();
+                  const borderColor = styles.getPropertyValue('--border').trim();
+                  const textColor = styles.getPropertyValue('--text').trim();
+                  const accentColor = styles.getPropertyValue('--accent').trim();
+                  const mapFill = styles.getPropertyValue('--th-bg').trim();
+                  const palette = currentChartPalette();
                   const maxUsers = Math.max(1, ...GEO_DATA.circles.map(c => c.users));
                   const barData = GEO_DATA.circles.map(c => ({
                       name: c.name,
@@ -806,9 +1036,9 @@ app.get('/admin', async (req, res) => {
                   indiaMapChart = echarts.init(el);
                   indiaMapChart.setOption({
                       tooltip: {
-                          backgroundColor: dark ? '#232a33' : '#ffffff',
-                          borderColor: dark ? '#30363d' : '#eee',
-                          textStyle: { color: dark ? '#c9d1d9' : '#333' }
+                          backgroundColor: surfaceAlt,
+                          borderColor: borderColor,
+                          textStyle: { color: textColor }
                       },
                       visualMap: {
                           show: false,
@@ -817,9 +1047,7 @@ app.get('/admin', async (req, res) => {
                           dimension: 2,
                           seriesIndex: 0,
                           inRange: {
-                              color: dark
-                                  ? ['#1f6feb', '#58a6ff', '#bc8cff', '#f778ba']
-                                  : ['#3498db', '#9b59b6', '#e74c3c']
+                              color: palette
                           }
                       },
                       geo3D: {
@@ -827,12 +1055,12 @@ app.get('/admin', async (req, res) => {
                           shading: 'lambert',
                           environment: surface,
                           itemStyle: {
-                              color: dark ? '#22303f' : '#dbe7f0',
+                              color: mapFill,
                               borderWidth: 0.6,
-                              borderColor: dark ? '#4a5a6d' : '#ffffff'
+                              borderColor: accentColor
                           },
                           emphasis: {
-                              itemStyle: { color: dark ? '#2e4258' : '#c3d9ea' },
+                              itemStyle: { color: palette[0] },
                               label: { show: false }
                           },
                           regionHeight: 1.2,
@@ -867,8 +1095,8 @@ app.get('/admin', async (req, res) => {
                           emphasis: {
                               label: {
                                   show: true,
-                                  backgroundColor: dark ? '#232a33' : '#ffffff',
-                                  color: dark ? '#e6edf3' : '#333',
+                                  backgroundColor: surfaceAlt,
+                                  color: textColor,
                                   padding: 6,
                                   borderRadius: 4,
                                   formatter: function (p) {
@@ -1094,23 +1322,17 @@ app.get('/admin', async (req, res) => {
                   }
               });
 
-              // ── THEME TOGGLE ──
+              // Replace the fallback dataset colors with the active theme palette.
+              restyleCharts();
+
+              // ── THEME PICKER ──
               (function () {
-                  const toggle = document.getElementById('themeToggle');
-                  const icon = document.getElementById('themeToggleIcon');
-                  const label = document.getElementById('themeToggleLabel');
-                  function syncToggle() {
-                      const dark = isDarkTheme();
-                      // Show the action the button will perform.
-                      icon.textContent = dark ? '☀️' : '🌙';
-                      label.textContent = dark ? 'Light' : 'Dark';
-                  }
-                  syncToggle();
-                  toggle.addEventListener('click', function () {
-                      const next = isDarkTheme() ? 'light' : 'dark';
+                  const select = document.getElementById('themeSelect');
+                  select.value = currentTheme();
+                  select.addEventListener('change', function () {
+                      const next = select.value;
                       document.documentElement.setAttribute('data-theme', next);
                       try { localStorage.setItem('dashboard-theme', next); } catch (e) {}
-                      syncToggle();
                       restyleCharts();
                   });
               })();

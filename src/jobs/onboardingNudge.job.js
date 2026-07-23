@@ -5,13 +5,7 @@ const {
   completeOnboarding
 } = require('../../db.js');
 const { sendWhatsAppMessage } = require('../services/whatsapp.service');
-
-// Nudge messages per onboarding step
-const NUDGE_MESSAGES = {
-  1: "Go ahead — just type your name and birthday like this: *YourName 29 Aug* 😊",
-  2: "Don't stop now! Add at least two people close to you. Just type:\n*Name 14 Feb* 💪",
-  3: "Anyone you missed? One more won't hurt 😄\nType: *Name 14 Feb*"
-};
+const { NUDGE_MESSAGES } = require('../services/onboarding.service');
 
 // Main nudge + abandon job
 // Timing (all relative to the original step message):
@@ -35,15 +29,20 @@ async function runOnboardingNudgeJob() {
           console.log(`[ONBOARDING_NUDGE] ⏭️  Abandoned onboarding for ${user.phone}`);
           abandonedCount++;
         } else {
-          // Send nudge (1st at 5 min, 2nd at 15 min)
+          // Send nudge (1st at 5 min, 2nd at 15 min).
+          // No message for this step (e.g. legacy step 3) → abandon so they don't sit forever.
           const nudgeMsg = NUDGE_MESSAGES[user.onboarding_step];
-          if (nudgeMsg) {
-            await sendWhatsAppMessage(user.phone, nudgeMsg);
-            await incrementOnboardingNudgeCount(user.phone);
-            const which = user.onboarding_nudge_count === 0 ? '1st' : '2nd';
-            console.log(`[ONBOARDING_NUDGE] ✅ Sent ${which} nudge to ${user.phone} (step ${user.onboarding_step})`);
-            nudgedCount++;
+          if (!nudgeMsg) {
+            await completeOnboarding(user.phone);
+            console.log(`[ONBOARDING_NUDGE] ⏭️  Abandoned onboarding for ${user.phone} (no nudge for step ${user.onboarding_step})`);
+            abandonedCount++;
+            continue;
           }
+          await sendWhatsAppMessage(user.phone, nudgeMsg);
+          await incrementOnboardingNudgeCount(user.phone);
+          const which = user.onboarding_nudge_count === 0 ? '1st' : '2nd';
+          console.log(`[ONBOARDING_NUDGE] ✅ Sent ${which} nudge to ${user.phone} (step ${user.onboarding_step})`);
+          nudgedCount++;
         }
       } catch (err) {
         console.error(`[ONBOARDING_NUDGE] ❌ Error processing ${user.phone}:`, err.message);

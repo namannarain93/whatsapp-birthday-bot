@@ -1,6 +1,8 @@
 const { pool } = require('./db.js');
+const moment = require('moment-timezone');
 const { getSundayReminderStatus } = require('./src/db/user.repository');
 const { resolvePhone } = require('./src/utils/telecomCircle');
+const { normalizeMonthToShort, normalizeMonthToCanonical, getMonthOrderNumber } = require('./src/utils/month.utils');
 
 async function getTotalMessagesAllTime() {
   try {
@@ -95,6 +97,10 @@ async function getLast7DayTrend() {
 // tracked templates (or has no template_name) is bucketed into "Misc".
 const TRACKED_TEMPLATES = [
   'event_details_reminder_2',
+  // Same-day reminder: 'birthday_reminder' is the legacy (marketing) template,
+  // 'event_details_reminder_3' is the current utility replacement. Both kept so
+  // historical and new sends are tracked.
+  'event_details_reminder_3',
   'birthday_reminder',
   'weekly_birthday_reminders'
 ];
@@ -601,15 +607,15 @@ async function getAllEventsTable() {
 
 // ── ONBOARDING FUNNEL METRICS ──
 
-// Get count of users at each onboarding step (0 = completed/not started, 1-3 = in progress)
+// Get count of users at each onboarding step (0 = completed/not started, 1-2 = in progress)
 async function getOnboardingFunnel() {
   try {
     const result = await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE onboarding_step = 0 AND has_seen_welcome = true) AS completed,
         COUNT(*) FILTER (WHERE onboarding_step = 1) AS step_1,
-        COUNT(*) FILTER (WHERE onboarding_step = 2) AS step_2,
-        COUNT(*) FILTER (WHERE onboarding_step = 3) AS step_3
+        -- step 3 is a removed legacy step; fold those users into step_2 for the funnel
+        COUNT(*) FILTER (WHERE onboarding_step IN (2, 3)) AS step_2
       FROM users
       WHERE created_at >= '2026-01-31'
     `);
@@ -617,16 +623,15 @@ async function getOnboardingFunnel() {
     return {
       completed: parseInt(row.completed) || 0,
       step_1: parseInt(row.step_1) || 0,
-      step_2: parseInt(row.step_2) || 0,
-      step_3: parseInt(row.step_3) || 0
+      step_2: parseInt(row.step_2) || 0
     };
   } catch (err) {
     console.error('Error in getOnboardingFunnel:', err);
-    return { completed: 0, step_1: 0, step_2: 0, step_3: 0 };
+    return { completed: 0, step_1: 0, step_2: 0 };
   }
 }
 
-// Onboarding completion rate (% of users who finished all 4 steps)
+// Onboarding completion rate (% of users who finished onboarding)
 async function getOnboardingCompletionRate() {
   try {
     const result = await pool.query(`
@@ -826,11 +831,11 @@ async function getRemindersSentToday() {
     const result = await pool.query(`
       SELECT
         COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE template_name = 'birthday_reminder') AS daily,
+        COUNT(*) FILTER (WHERE template_name IN ('birthday_reminder', 'event_details_reminder_3')) AS daily,
         COUNT(*) FILTER (WHERE template_name = 'weekly_birthday_reminders') AS weekly
       FROM messages
       WHERE direction = 'outgoing'
-        AND template_name IN ('birthday_reminder', 'weekly_birthday_reminders')
+        AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders')
         AND created_at >= CURRENT_DATE
     `);
     const row = result.rows[0];
@@ -845,6 +850,63 @@ async function getRemindersSentToday() {
   }
 }
 
+// The next calendar day that has saved birthdays/anniversaries (recurring
+// annually-driven event day). Today's events are excluded — their reminders are
+// already in flight — so the card always looks ahead.
+async function getNextReminderDate() {
+  try {
+    const result = await pool.query(`
+      SELECT day, month,
+             COUNT(*) FILTER (WHERE LOWER(type) = 'birthday') AS birthdays,
+             COUNT(*) FILTER (WHERE LOWER(type) = 'anniversary') AS anniversaries,
+             COUNT(*) AS total
+      FROM birthdays
+      GROUP BY day, month
+    `);
+
+    if (result.rows.length === 0) return null;
+
+    const now = moment().tz('Asia/Kolkata').startOf('day');
+
+    let best = null;
+    for (const row of result.rows) {
+      const monthShort = normalizeMonthToShort(row.month);
+      if (!monthShort) continue;
+      const monthNum = getMonthOrderNumber(normalizeMonthToCanonical(monthShort));
+      const day = parseInt(row.day, 10);
+      if (!monthNum || monthNum > 12 || !day) continue;
+
+      // Next occurrence of this (day, month) strictly after today, in IST.
+      let eventDate = moment.tz([now.year(), monthNum - 1, day], 'Asia/Kolkata').startOf('day');
+      if (!eventDate.isValid()) continue;
+      if (!eventDate.isAfter(now)) eventDate = eventDate.add(1, 'year');
+
+      if (!best || eventDate.isBefore(best.eventDate)) {
+        best = {
+          eventDate,
+          birthdays: parseInt(row.birthdays, 10) || 0,
+          anniversaries: parseInt(row.anniversaries, 10) || 0,
+          total: parseInt(row.total, 10) || 0
+        };
+      }
+    }
+
+    if (!best) return null;
+
+    return {
+      date: best.eventDate.format('YYYY-MM-DD'),
+      label: best.eventDate.format('ddd, MMM D'),
+      daysUntil: best.eventDate.diff(now, 'days'),
+      total: best.total,
+      birthdays: best.birthdays,
+      anniversaries: best.anniversaries
+    };
+  } catch (err) {
+    console.error('Error in getNextReminderDate:', err);
+    return null;
+  }
+}
+
 // Reminder delivery rate: sent vs delivered for template (reminder) messages
 async function getReminderDeliveryRate() {
   try {
@@ -855,7 +917,7 @@ async function getReminderDeliveryRate() {
         COUNT(*) FILTER (WHERE status = 'failed') AS failed
       FROM messages
       WHERE direction = 'outgoing'
-        AND template_name IN ('birthday_reminder', 'weekly_birthday_reminders')
+        AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders')
     `);
     const row = result.rows[0];
     const total = parseInt(row.total) || 0;
@@ -881,7 +943,7 @@ async function getPostReminderEngagement() {
         SELECT DISTINCT recipient_phone, DATE(created_at) AS reminder_date
         FROM messages
         WHERE direction = 'outgoing'
-          AND template_name IN ('birthday_reminder', 'weekly_birthday_reminders')
+          AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders')
           AND created_at >= CURRENT_DATE - INTERVAL '30 days'
       ),
       engaged AS (
@@ -1257,6 +1319,7 @@ module.exports = {
   getRecentUnknownMessages,
   // Reminder effectiveness
   getRemindersSentToday,
+  getNextReminderDate,
   getReminderDeliveryRate,
   getPostReminderEngagement,
   // AI daily summary

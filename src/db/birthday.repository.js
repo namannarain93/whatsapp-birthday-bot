@@ -68,6 +68,27 @@ async function getBirthdaysForDate(phone, day, month) {
   return res.rows;
 }
 
+// Get birthdays for a specific day/month for the day-of reminder, EXCLUDING any
+// event that was added today (in the user's timezone). If a user just saved an
+// event that falls on today, they already know about it, so a same-day reminder
+// is redundant. created_at is stored as a UTC wall-clock timestamp.
+async function getBirthdaysForReminder(phone, day, month, timezone, todayDate) {
+  const res = await pool.query(
+    `
+    SELECT name, day, month, type
+    FROM birthdays
+    WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
+      AND (
+        created_at IS NULL
+        OR to_char((created_at AT TIME ZONE 'UTC') AT TIME ZONE $4, 'YYYY-MM-DD') <> $5
+      )
+    ORDER BY name
+    `,
+    [phone, day, month, timezone, todayDate]
+  );
+  return res.rows;
+}
+
 // Get birthday by name (case-insensitive, partial match)
 async function getBirthdayByName(phone, name) {
   const res = await pool.query(
@@ -254,6 +275,7 @@ module.exports = {
   getBirthdaysForMonth,
   getAllBirthdays,
   getBirthdaysForDate,
+  getBirthdaysForReminder,
   getBirthdayByName,
   getBirthdaysByDate,
   getUpcomingBirthdays,

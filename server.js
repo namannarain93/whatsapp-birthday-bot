@@ -96,6 +96,13 @@ app.get('/admin', async (req, res) => {
     const unknownIntentRate = await metrics.getUnknownIntentRate();
     const recentUnknownMessages = await metrics.getRecentUnknownMessages();
     const remindersSentToday = await metrics.getRemindersSentToday();
+    const nextReminderDate = await metrics.getNextReminderDate();
+    const nextReminderValue = nextReminderDate
+      ? (nextReminderDate.daysUntil === 1 ? 'Tomorrow' : `${nextReminderDate.daysUntil} days`)
+      : '—';
+    const nextReminderSubtitle = nextReminderDate
+      ? `${nextReminderDate.label} · ${nextReminderDate.total} event${nextReminderDate.total === 1 ? '' : 's'} (${nextReminderDate.birthdays} birthdays, ${nextReminderDate.anniversaries} anniversaries)`
+      : 'no upcoming events';
     const reminderDeliveryRate = await metrics.getReminderDeliveryRate();
     const postReminderEngagement = await metrics.getPostReminderEngagement();
     const failuresByPhoneRaw = await metrics.getFailuresByPhone();
@@ -141,11 +148,10 @@ app.get('/admin', async (req, res) => {
     const intentData = JSON.stringify(intentDistribution.map(i => i.count));
 
     // Onboarding funnel chart data
-    const onboardingFunnelLabels = JSON.stringify(['Step 1', 'Step 2', 'Step 3', 'Completed']);
+    const onboardingFunnelLabels = JSON.stringify(['Step 1', 'Step 2', 'Completed']);
     const onboardingFunnelData = JSON.stringify([
       onboardingFunnel.step_1,
       onboardingFunnel.step_2,
-      onboardingFunnel.step_3,
       onboardingFunnel.completed
     ]);
 
@@ -699,6 +705,11 @@ app.get('/admin', async (req, res) => {
                       <div class="value">${remindersSentToday.total}</div>
                       <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">${remindersSentToday.daily} daily, ${remindersSentToday.weekly} weekly</div>
                   </div>
+                  <div class="card">
+                      <h3>Next Event Day</h3>
+                      <div class="value">${nextReminderValue}</div>
+                      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">${nextReminderSubtitle}</div>
+                  </div>
               </div>
 
               <!-- ── REMINDER EFFECTIVENESS ── -->
@@ -725,7 +736,7 @@ app.get('/admin', async (req, res) => {
                   <div class="card">
                       <h3>Onboarding Completion</h3>
                       <div class="value">${onboardingCompletionRate}%</div>
-                      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Step 1: ${onboardingFunnel.step_1} · Step 2: ${onboardingFunnel.step_2} · Step 3: ${onboardingFunnel.step_3}</div>
+                      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Step 1: ${onboardingFunnel.step_1} · Step 2: ${onboardingFunnel.step_2}</div>
                   </div>
                   <div class="card${parseFloat(unknownIntentRate) > 20 ? ' fail' : ''}">
                       <h3>Unknown Intent Rate</h3>

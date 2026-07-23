@@ -1,5 +1,5 @@
 // Multi-step onboarding service
-// Step 1: Ask for their own birthday  →  Step 2: Inner circle  →  Step 3: Forgotten ones  →  Step 4: Completion
+// Step 1: Ask for their own birthday  →  Step 2: Inner circle  →  Completion
 
 const {
   userExists,
@@ -16,30 +16,31 @@ const { parseNameAndDate } = require('../parsers/date.parser');
 const { normalizeMonthToShort } = require('../utils/month.utils');
 const { parseIntentWithLLM } = require('../../llm.js');
 
-// ── Old welcome message (kept for "help" command) ──
+// ── Help message (sent only when a user types "help") ──
 
-const WELCOME_MESSAGE =
-  "This is a new bot and still being tested. Responses may be slow and some things may not work as expected. Please leave a message at +91-8769010233, for any feedback.😊\n\n" +
-  "To save a birthday, just type (example):\n" +
-  " → *Papa 29 Aug*\n" +
-  " → *Mom 9 Feb*\n\n" +
-  "To search or delete a birthday, just type (example):\n" +
-  " → *search papa*\n" +
-  " → *delete mom*\n\n" +
-  "To see all birthdays and anniversaries, type:\n" +
-  " → *complete list*\n\n" +
-  "In case you get stuck, type:\n" +
-  " → *help*\n\n" +
-  "That's it 👍";
+const HELP_MESSAGE =
+  "🎉 Never forget a birthday or anniversary again.\n\n" +
+  "There are only 4 simple commands:\n\n" +
+  "1. Save a birthday or anniversary\n" +
+  "→ Papa 29 Aug\n" +
+  "→ Mom 9 Feb anniversary\n\n" +
+  "2. Delete an entry\n" +
+  "→ delete mom\n\n" +
+  "3. See your complete list\n" +
+  "→ complete list\n\n" +
+  "4. Need help?\n" +
+  "→ help\n\n" +
+  "Questions or feedback? Just message us at +91 87690 10233.\n\n" +
+  "That's it. 😊";
 
-// ── 4-step onboarding messages ──
+// ── Onboarding messages ──
 
 const ONBOARDING_STEP_1 =
-  "Hi! 👋 Welcome to Tannya & Naman's Birthday and Anniversary Reminder 🎂💍\n\n" +
+  "Hi! 👋 Welcome to the WhatsApp Birthday and Anniversary Reminder 🎂💍\n\n" +
   "Let's start with the most important one — yours 😉\n\n" +
   "Add your own birthday first so we never forget to remind you.\n\n" +
   "Type it like this 👇\n" +
-  "YourName 29 Aug\n\n" +
+  "Name 29 Aug\n\n" +
   "Go on. Lock it in 🎉";
 
 const ONBOARDING_STEP_2 =
@@ -53,16 +54,7 @@ const ONBOARDING_STEP_2 =
   "Name 14 Feb\n\n" +
   "Add two now. Future-you will be grateful 😄";
 
-const ONBOARDING_STEP_3 =
-  "Take a quick second…\n\n" +
-  "Who did you recently forget? 😅\n" +
-  "A cousin?\n" +
-  "An anniversary?\n" +
-  "A close friend you felt bad about?\n\n" +
-  "Add those tricky ones now before they slip again.\n\n" +
-  "This is your safety net 🎯";
-
-const ONBOARDING_STEP_4 =
+const ONBOARDING_COMPLETE =
   "You're all set 🙌✨\n\n" +
   "From today, you're officially someone who never misses important birthdays or anniversaries.\n\n" +
   "We'll remind you before the big day so you're always prepared 🎂💍\n\n" +
@@ -71,9 +63,8 @@ const ONBOARDING_STEP_4 =
   "Now relax — we've got you covered.";
 
 const NUDGE_MESSAGES = {
-  1: "Go ahead — just type your name and birthday like this: *YourName 29 Aug* 😊",
-  2: "Don't stop now! Add at least two people close to you. Just type:\n*Name 14 Feb* 💪",
-  3: "Anyone you missed? One more won't hurt 😄\nType: *Name 14 Feb*"
+  1: "Go ahead — just type your name and birthday like this: *Name 29 Aug* 😊",
+  2: "Don't stop now! Add at least two people close to you. Just type:\n*Name 14 Feb* 💪"
 };
 
 // ── Stale onboarding threshold (minutes) ──
@@ -96,7 +87,7 @@ async function handleOnboarding(phone) {
   return false;
 }
 
-// Returns true if the user is in an active onboarding step (1-3).
+// Returns true if the user is in an active onboarding step (1-2).
 // Automatically abandons stale onboarding (>30 min old).
 async function isInOnboarding(phone) {
   const state = await getOnboardingState(phone);
@@ -131,21 +122,18 @@ async function handleOnboardingResponse(phone, message) {
       await sendWhatsAppMessage(phone, ONBOARDING_STEP_2);
       break;
     case 2:
-      await setOnboardingStep(phone, 3);
-      await sendWhatsAppMessage(phone, ONBOARDING_STEP_3);
-      break;
-    case 3:
+    case 3: // legacy: users mid-flow on removed step 3
       await completeOnboarding(phone);
-      await sendWhatsAppMessage(phone, ONBOARDING_STEP_4);
+      await sendWhatsAppMessage(phone, ONBOARDING_COMPLETE);
       break;
   }
 
   return true;
 }
 
-// Send help message (uses old welcome message, for existing users)
+// Send help message (for existing users who type "help")
 async function sendHelpMessage(phone) {
-  await sendWhatsAppMessage(phone, WELCOME_MESSAGE);
+  await sendWhatsAppMessage(phone, HELP_MESSAGE);
 }
 
 // ───────────────────────────────────────────────
@@ -238,6 +226,5 @@ module.exports = {
   isInOnboarding,
   handleOnboardingResponse,
   sendHelpMessage,
-  WELCOME_MESSAGE,
   NUDGE_MESSAGES
 };

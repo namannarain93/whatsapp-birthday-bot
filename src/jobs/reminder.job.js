@@ -3,7 +3,7 @@ const moment = require('moment-timezone');
 const { 
   pool, 
   getAllUsers, 
-  getBirthdaysForDate, 
+  getBirthdaysForReminder, 
   hasReminderBeenSentToday, 
   logReminderSent 
 } = require('../../db.js');
@@ -55,24 +55,29 @@ async function sendBirthdayReminders() {
           continue;
         }
         
-        // Get birthdays for today
-        const birthdays = await getBirthdaysForDate(phone, todayDay, todayMonth);
+        // Get birthdays for today, excluding any event the user added today.
+        // If someone just saved an event that falls on today, they already know
+        // about it, so sending a same-day reminder makes no sense.
+        const birthdays = await getBirthdaysForReminder(phone, todayDay, todayMonth, userTimezone, todayDate);
         
         if (birthdays.length === 0) {
-          // No birthdays today for this user
+          // No birthdays today for this user (or the only ones were just added today)
           continue;
         }
         
-        // Prepare names for message
+        // Prepare event phrase for the message. The utility template reads
+        // "It's *{{1}}* today. ...", so {{1}} is a possessive event phrase
+        // (e.g. "John's birthday", "Sarah's anniversary") rather than a bare name.
         const names = birthdays.map(b => {
-          return b.type === 'anniversary' ? `${b.name} (Anniversary)` : b.name;
+          const label = b.type === 'anniversary' ? 'anniversary' : 'birthday';
+          return `${b.name}'s ${label}`;
         });
         const namesString = names.join(', ');
         
-        // Always use template message (as per requirements)
-        // Template name: "birthday_reminder" (must be created in Meta dashboard)
-        // Template body should accept {{1}} parameter with names
-        await sendTemplateMessage(phone, 'birthday_reminder', [namesString]);
+        // Utility template (won't get throttled like the old marketing template).
+        // Template name: "event_details_reminder_3" (must be created in Meta dashboard).
+        // Body: "It's *{{1}}* today. This event is on your saved reminders."
+        await sendTemplateMessage(phone, 'event_details_reminder_3', [namesString], 'en_US');
         
         // Log that reminder was sent (idempotent - prevents duplicates)
         await logReminderSent(phone, todayDate, 'daily_today');

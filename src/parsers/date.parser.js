@@ -2,8 +2,30 @@
 
 const { normalizeMonthToShort } = require('../utils/month.utils');
 
-// Parse flexible "name + date" messages into { name, day, month }
-function parseNameAndDate(message) {
+const NAME_FILLER_WORDS = new Set([
+  'birthday', 'birthdays', 'bday', 'bdays', 'anniversary', 'anniversaries',
+  'anniv', 'wedding', 'marriage', 'of', 'on', 'is', 'for', 'save', 'add',
+  'remind', 'set', 'my', 'me', 'i', 'mine', 'myself', 'name', 'am', 'this',
+  "it's", 'its', 'help', 'please'
+]);
+
+// Remove instruction/event words left behind after date extraction while
+// preserving the original casing and meaningful name tokens.
+function cleanEventName(name) {
+  if (!name) return '';
+  return name
+    .split(/\s+/)
+    .filter(token => token && !NAME_FILLER_WORDS.has(token.toLowerCase()))
+    .join(' ')
+    .trim();
+}
+
+// Find a day + month anywhere in the message.
+// Returns { day, month, remainder } where month is the short form ("Sep") and
+// remainder is whatever text is left after removing the date tokens (may be
+// empty, e.g. for a date-only message like "29 september"). Returns null when
+// no complete date is present.
+function extractDayAndMonth(message) {
   if (!message || !message.trim()) return null;
 
   const original = message;
@@ -58,11 +80,27 @@ function parseNameAndDate(message) {
     return null;
   }
 
-  // Whatever remains (minus commas and extra spaces) is treated as the name
-  const name = working.replace(/[,]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!name) return null;
+  // Clean up the remainder: commas become spaces, and separator punctuation
+  // left dangling at the edges (e.g. the dash in "19 October - Ankit Singh")
+  // is stripped without touching hyphens inside names like "Anne-Marie".
+  const remainder = working
+    .replace(/[,]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[\s,:–—-]+|[\s,:–—-]+$/g, '');
 
-  return { name, day, month: monthShort };
+  return { day, month: monthShort, remainder };
+}
+
+// Parse flexible "name + date" messages into { name, day, month }
+function parseNameAndDate(message) {
+  const extracted = extractDayAndMonth(message);
+  if (!extracted) return null;
+
+  const { day, month, remainder } = extracted;
+  if (!remainder) return null;
+
+  return { name: remainder, day, month };
 }
 
 // Extract clean name(s) from delete input, stripping dates and formatting
@@ -99,6 +137,8 @@ function extractNamesFromDeleteInput(input) {
 
 module.exports = {
   parseNameAndDate,
+  extractDayAndMonth,
+  cleanEventName,
   extractNamesFromDeleteInput
 };
 

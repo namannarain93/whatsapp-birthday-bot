@@ -206,6 +206,10 @@ async function handleIncomingMessage(req, res) {
     await saveReceivedMessage(wamid, phone, message);
 
     const lowerMessage = message.toLowerCase();
+    // Only a bare "help" (with optional punctuation) is the help command;
+    // messages that merely contain the word ("help me save Papa 29 Aug")
+    // must flow through normal parsing.
+    const isHelpCommand = /^help[\s!.?]*$/.test(lowerMessage.trim());
 
     console.log('📞 FROM:', phone);
     console.log('💬 MESSAGE:', message);
@@ -214,7 +218,7 @@ async function handleIncomingMessage(req, res) {
     await updateLastInteraction(phone);
 
     // 0️⃣ FIRST-TIME USER ONBOARDING (check at the very beginning, before any intent parsing)
-    const wasOnboarded = await handleOnboarding(phone);
+    const wasOnboarded = await handleOnboarding(phone, message);
     if (wasOnboarded) {
       await updateMessageIntent(wamid, 'onboarding_new');
       return res.sendStatus(200);
@@ -222,7 +226,7 @@ async function handleIncomingMessage(req, res) {
 
     // 🔄 MID-ONBOARDING RESPONSE (process their reply and advance to next step)
     // Skip if user typed "help" — help should always work even during onboarding
-    if (!lowerMessage.includes('help')) {
+    if (!isHelpCommand) {
       const inOnboarding = await isInOnboarding(phone);
       if (inOnboarding) {
         const handled = await handleOnboardingResponse(phone, message);
@@ -237,7 +241,7 @@ async function handleIncomingMessage(req, res) {
     // If the bot previously asked a clarification question, the user's response
     // should be interpreted in that context rather than parsed from scratch.
     const pendingAction = await getPendingAction(phone);
-    if (pendingAction && !lowerMessage.includes('help')) {
+    if (pendingAction && !isHelpCommand) {
       // Clear the pending action immediately so it doesn't loop
       await clearPendingAction(phone);
 
@@ -265,7 +269,7 @@ async function handleIncomingMessage(req, res) {
     }
 
     // 0️⃣ Explicit help keyword (always available)
-    if (lowerMessage.includes('help')) {
+    if (isHelpCommand) {
       await sendHelpMessage(phone);
       await updateMessageIntent(wamid, 'help');
       return res.sendStatus(200);

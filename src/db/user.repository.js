@@ -52,16 +52,26 @@ async function userExists(phone) {
   return res.rowCount > 0;
 }
 
-// Onboard a new user (insert into users table with has_seen_welcome = true and default timezone)
+// Atomically onboard a new user. Returns true only when this call created the
+// row, preventing concurrent first messages from starting onboarding twice.
 async function onboardUser(phone) {
-  await pool.query(
+  const res = await pool.query(
     `
-    INSERT INTO users (phone, has_seen_welcome, timezone)
-    VALUES ($1, true, 'Asia/Kolkata')
+    INSERT INTO users (
+      phone,
+      has_seen_welcome,
+      timezone,
+      last_interaction_at,
+      onboarding_step,
+      onboarding_last_sent_at
+    )
+    VALUES ($1, true, 'Asia/Kolkata', CURRENT_TIMESTAMP, 1, CURRENT_TIMESTAMP)
     ON CONFLICT (phone) DO NOTHING
+    RETURNING phone
     `,
     [phone]
   );
+  return res.rowCount > 0;
 }
 
 // Check if user has seen the welcome message

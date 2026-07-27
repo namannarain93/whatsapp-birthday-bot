@@ -5,7 +5,8 @@ const { pool } = require('./pool');
 // Get the onboarding state for a user
 async function getOnboardingState(phone) {
   const res = await pool.query(
-    `SELECT onboarding_step, onboarding_last_sent_at, onboarding_nudge_count
+    `SELECT onboarding_step, onboarding_last_sent_at, onboarding_nudge_count,
+            onboarding_parse_failures
      FROM users WHERE phone = $1`,
     [phone]
   );
@@ -13,15 +14,30 @@ async function getOnboardingState(phone) {
   return res.rows[0];
 }
 
-// Set onboarding step (resets nudge count and updates timestamp)
+// Set onboarding step (resets nudge count, parse failures, and timestamp)
 async function setOnboardingStep(phone, step) {
   await pool.query(
     `UPDATE users
      SET onboarding_step = $2,
          onboarding_last_sent_at = NOW(),
-         onboarding_nudge_count = 0
+         onboarding_nudge_count = 0,
+         onboarding_parse_failures = 0
      WHERE phone = $1`,
     [phone, step]
+  );
+}
+
+// Record that we re-prompted the user within the same onboarding step because
+// their reply couldn't be parsed. Restarts the nudge clock (the re-prompt is a
+// fresh outgoing question) and counts the failure so we don't re-prompt forever.
+async function recordOnboardingReprompt(phone) {
+  await pool.query(
+    `UPDATE users
+     SET onboarding_last_sent_at = NOW(),
+         onboarding_nudge_count = 0,
+         onboarding_parse_failures = onboarding_parse_failures + 1
+     WHERE phone = $1`,
+    [phone]
   );
 }
 
@@ -81,6 +97,7 @@ async function getNewUsersForFollowup() {
 module.exports = {
   getOnboardingState,
   setOnboardingStep,
+  recordOnboardingReprompt,
   completeOnboarding,
   incrementOnboardingNudgeCount,
   getOnboardingUsersNeedingAction,

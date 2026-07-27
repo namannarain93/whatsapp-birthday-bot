@@ -61,6 +61,10 @@ const dbReady = (async () => {
       ALTER TABLE users 
       ADD COLUMN IF NOT EXISTS onboarding_nudge_count INTEGER NOT NULL DEFAULT 0;
     `);
+    await pool.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS onboarding_parse_failures INTEGER NOT NULL DEFAULT 0;
+    `);
     console.log('✅ Onboarding state columns ensured');
 
     // Add pending_action column (stores JSON context when bot asks a clarification question)

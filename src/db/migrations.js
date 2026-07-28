@@ -162,6 +162,17 @@ const dbReady = (async () => {
       );
     `);
     console.log('✅ Daily summaries table ensured');
+
+    // Monthly snapshots of Sunday-reminder-eligible ("active") users.
+    // Written daily so past months keep their last known count after month-end.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS monthly_active_user_snapshots (
+        month DATE PRIMARY KEY,
+        active_users INTEGER NOT NULL,
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log('✅ Monthly active-user snapshots table ensured');
     
     console.log('Database tables ready (Postgres)');
   } catch (err) {

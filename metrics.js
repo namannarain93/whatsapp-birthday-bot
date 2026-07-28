@@ -308,13 +308,15 @@ async function getRecentMessageStatusTable(limit = 25) {
 
     return result.rows.map(row => {
       const isTemplate = !!row.template_name;
-      const isSuccess = row.status === 'delivered';
+      // Only Meta webhook "failed" is a real failure. "sent" means accepted by
+      // WhatsApp and awaiting delivery; "delivered"/"read" are successes.
+      const isFailure = row.status === 'failed';
       return {
         phone: row.recipient_phone || 'Unknown',
         messageType: isTemplate ? 'Meta template' : 'Free form',
         templateName: row.template_name || '—',
-        messageStatus: isSuccess ? 'Success' : 'Failure',
-        failureCode: isSuccess ? 'NA' : (row.error_code || 'Unknown'),
+        messageStatus: isFailure ? 'Failure' : 'Success',
+        failureCode: isFailure ? (row.error_code || 'Unknown') : 'NA',
         timestamp: row.created_at
           ? new Date(row.created_at).toLocaleString('en-IN', {
               timeZone: 'Asia/Kolkata',
@@ -973,6 +975,27 @@ async function getPostReminderEngagement() {
   }
 }
 
+// Upsert today's Sunday-reminder-eligible count into the current calendar month
+// (Asia/Kolkata). Called daily so past months keep their last known value.
+async function snapshotMonthlyActiveUsers() {
+  try {
+    const monthStart = moment().tz('Asia/Kolkata').startOf('month').format('YYYY-MM-DD');
+    const activeUsers = (await getSundayReminderStats()).active;
+    await pool.query(
+      `INSERT INTO monthly_active_user_snapshots (month, active_users, updated_at)
+       VALUES ($1::date, $2, NOW())
+       ON CONFLICT (month) DO UPDATE
+         SET active_users = EXCLUDED.active_users,
+             updated_at = NOW()`,
+      [monthStart, activeUsers]
+    );
+    return { month: monthStart, activeUsers };
+  } catch (err) {
+    console.error('Error in snapshotMonthlyActiveUsers:', err);
+    return null;
+  }
+}
+
 // ── MONTHLY GROWTH METRICS ──
 // Builds a full 12-month table for the current year (including future/empty months)
 // to track progress toward the active-users goal (1000 active users in 6 months).
@@ -1022,8 +1045,12 @@ async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) 
       WHERE direction = 'outgoing' AND created_at IS NOT NULL
       GROUP BY DATE_TRUNC('month', created_at)
     `);
+    // Persisted end-of-month (last-known) active-user counts for past months
+    const activeSnapshotRows = await safeRows('activeSnapshots', `
+      SELECT month, active_users
+      FROM monthly_active_user_snapshots
+    `);
     // Active users = Sunday-reminder-eligible users (same definition as the KPI card).
-    // Point-in-time snapshot, so only the current month can be populated.
     let currentActiveUsers = 0;
     try {
       currentActiveUsers = (await getSundayReminderStats()).active;
@@ -1044,10 +1071,11 @@ async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) 
     const newUsersMap = toMap(newUsersRows, 'new_users');
     const eventsMap = toMap(eventsRows, 'events');
     const sentMap = toMap(sentRows, 'sent');
+    const activeSnapshotMap = toMap(activeSnapshotRows, 'active_users');
 
-    const now = new Date();
-    const year = now.getFullYear();
-    const currentMonthIdx = now.getMonth();
+    const now = moment().tz('Asia/Kolkata');
+    const year = now.year();
+    const currentMonthIdx = now.month(); // 0-indexed
 
     // Cumulative users carried in from before this year
     let cumulative = Object.entries(newUsersMap)
@@ -1074,9 +1102,14 @@ async function getMonthlyMetrics(goalActiveUsers = 1000, goalHorizonMonths = 6) 
       cumulative += newUsers;
       cumulativeEvents += eventsMap[key] || 0;
 
-      // Active users uses the Sunday-reminder definition (current snapshot only).
-      // Historical eligibility can't be reconstructed, so non-current months are null.
-      const activeUsers = m === currentMonthIdx ? currentActiveUsers : null;
+      // Current month: live Sunday-reminder count.
+      // Past months: last persisted snapshot (null if never saved, e.g. before snapshots existed).
+      let activeUsers = null;
+      if (m === currentMonthIdx) {
+        activeUsers = currentActiveUsers;
+      } else if (m < currentMonthIdx && Object.prototype.hasOwnProperty.call(activeSnapshotMap, key)) {
+        activeUsers = activeSnapshotMap[key];
+      }
 
       // Target active users: ramp from baseline (current month) to goal over the horizon
       let target = null;
@@ -1267,7 +1300,7 @@ async function getGeoDistribution() {
 async function getLatestDailySummary() {
   try {
     const result = await pool.query(`
-      SELECT summary_date, summary_text
+      SELECT summary_date, summary_text, created_at
       FROM daily_summaries
       ORDER BY summary_date DESC
       LIMIT 1
@@ -1275,7 +1308,8 @@ async function getLatestDailySummary() {
     if (result.rows.length === 0) return null;
     return {
       date: result.rows[0].summary_date,
-      text: result.rows[0].summary_text
+      text: result.rows[0].summary_text,
+      updatedAt: result.rows[0].created_at
     };
   } catch (err) {
     console.error('Error in getLatestDailySummary:', err);
@@ -1297,6 +1331,7 @@ module.exports = {
   getTotalAnniversariesCount,
   getEventsAddedToday,
   getMonthlyMetrics,
+  snapshotMonthlyActiveUsers,
   getWeeklyEventsTrend,
   getRecentMessageStatusTable,
   getUserEventSummaryTable,

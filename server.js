@@ -31,6 +31,7 @@ const { startDailyUpcomingReminderScheduler } = require('./src/jobs/dailyUpcomin
 const { startNewUserFollowupScheduler } = require('./src/jobs/newUserFollowup.job');
 const { startOnboardingNudgeScheduler } = require('./src/jobs/onboardingNudge.job');
 const { startDailySummaryScheduler } = require('./src/jobs/dailySummary.job');
+const { startMonthlyActiveUsersScheduler } = require('./src/jobs/monthlyActiveUsers.job');
 
 const DASHBOARD_THEMES = [
   { id: 'light', label: '☀️ Light', dark: false },
@@ -318,10 +319,40 @@ app.get('/admin', async (req, res) => {
     const summaryBulletsHtml = latestDailySummary
       ? toSummaryBullets(latestDailySummary.text).map(item => `<li>${escapeHtml(item)}</li>`).join('')
       : '';
+    // Summary is generated for the previous calendar day (rolling last-24h snapshot at ~7 AM IST)
+    const summaryOfDate = latestDailySummary
+      ? (() => {
+          const raw = latestDailySummary.date;
+          const iso = raw instanceof Date
+            ? raw.toISOString().slice(0, 10)
+            : String(raw).slice(0, 10);
+          const [y, m, d] = iso.split('-').map(Number);
+          const prev = new Date(Date.UTC(y, m - 1, d - 1));
+          return prev.toLocaleDateString('en-IN', {
+            timeZone: 'UTC',
+            weekday: 'long',
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric'
+          });
+        })()
+      : '';
+    const summaryUpdatedAt = latestDailySummary?.updatedAt
+      ? new Date(latestDailySummary.updatedAt).toLocaleString('en-IN', {
+          timeZone: 'Asia/Kolkata',
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        })
+      : '';
     const aiSummaryHtml = latestDailySummary
       ? `
           <div class="ai-summary">
-              <h3>🤖 Daily AI Summary <span class="ai-summary-date">${new Date(latestDailySummary.date).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}</span></h3>
+              <h3>🤖 Daily AI Summary <span class="ai-summary-date">for ${summaryOfDate}</span></h3>
+              ${summaryUpdatedAt ? `<p class="ai-summary-updated">Updated ${summaryUpdatedAt} IST</p>` : ''}
               <ul>${summaryBulletsHtml}</ul>
           </div>`
       : `
@@ -610,6 +641,7 @@ app.get('/admin', async (req, res) => {
               .ai-summary { padding: 20px; margin-bottom: 30px; }
               .ai-summary h3 { margin: 0 0 10px; color: var(--text-heading); font-size: 1rem; }
               .ai-summary-date { font-weight: normal; color: var(--text-muted); font-size: 0.85rem; margin-left: 8px; }
+              .ai-summary-updated { margin: -4px 0 10px; color: var(--text-muted); font-size: 0.8rem; }
               .ai-summary p { margin: 0; line-height: 1.6; color: var(--text); }
               .ai-summary ul { margin: 0; padding-left: 20px; line-height: 1.6; color: var(--text); }
               .ai-summary ul li { margin-bottom: 6px; }
@@ -770,8 +802,8 @@ app.get('/admin', async (req, res) => {
                       <h3>Progress Toward 1,000 Active Users</h3>
                       <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0;">
                           Active = users receiving Sunday reminders. Target ramps from the current month to the goal over 6 months;
-                          progress compares active users against that target. Active users is a live snapshot, so only the current
-                          month is populated (past months can't be reconstructed).
+                          progress compares active users against that target. The current month is live; past months use the last
+                          saved daily snapshot (months before snapshots began may show —).
                       </p>
                       <table>
                           <thead>
@@ -1456,4 +1488,6 @@ app.listen(PORT, async () => {
   startOnboardingNudgeScheduler();
   // Start daily AI summary scheduler (generates dashboard summary at 7 AM IST)
   startDailySummaryScheduler();
+  // Persist monthly active-user counts so past months stay populated in the table
+  startMonthlyActiveUsersScheduler();
 });

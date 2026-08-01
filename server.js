@@ -53,6 +53,9 @@ app.use((req, res, next) => {
 // JSON body parsing middleware
 app.use(express.json());
 
+// Static assets (favicon, etc.)
+app.use(express.static(path.join(__dirname, 'public')));
+
 // Register webhook routes
 app.use('/', webhookRoutes);
 
@@ -102,7 +105,7 @@ app.get('/admin', async (req, res) => {
       ? (nextReminderDate.daysUntil === 1 ? 'Tomorrow' : `${nextReminderDate.daysUntil} days`)
       : '—';
     const nextReminderSubtitle = nextReminderDate
-      ? `${nextReminderDate.label} · ${nextReminderDate.total} event${nextReminderDate.total === 1 ? '' : 's'} (${nextReminderDate.birthdays} birthdays, ${nextReminderDate.anniversaries} anniversaries)`
+      ? `${nextReminderDate.label}<br>${nextReminderDate.total} event${nextReminderDate.total === 1 ? '' : 's'} (${nextReminderDate.birthdays} birthdays, ${nextReminderDate.anniversaries} anniversaries)`
       : 'no upcoming events';
     const reminderDeliveryRate = await metrics.getReminderDeliveryRate();
     const postReminderEngagement = await metrics.getPostReminderEngagement();
@@ -368,6 +371,9 @@ app.get('/admin', async (req, res) => {
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Birthday Bot Admin</title>
+          <link rel="icon" href="/favicon.ico" sizes="32x32">
+          <link rel="icon" type="image/png" href="/favicon.png" sizes="192x192">
+          <link rel="apple-touch-icon" href="/apple-touch-icon.png">
           <script>
               // Apply saved/system theme before first paint to avoid a flash.
               (function () {
@@ -596,8 +602,9 @@ app.get('/admin', async (req, res) => {
               h1, h2, h3 { font-family: var(--font-heading); }
               h1 { color: var(--text-heading); }
               /* ── THEME PICKER ── */
-              .dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-              .theme-select { appearance: none; -webkit-appearance: none; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: 0 2px 4px var(--shadow); border-radius: 999px; padding: 8px 34px 8px 14px; font-size: 0.9rem; font-weight: 600; font-family: var(--font-body); cursor: pointer; transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
+              .dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+              .dashboard-header h1 { margin: 0; }
+              .theme-select { appearance: none; -webkit-appearance: none; background: var(--surface); color: var(--text); border: 1px solid var(--border); box-shadow: 0 2px 4px var(--shadow); border-radius: 999px; padding: 8px 38px 8px 16px; font-size: 0.9rem; font-weight: 600; font-family: var(--font-body); line-height: 1.35; cursor: pointer; transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
               .theme-select:hover { border-color: var(--accent); color: var(--accent); }
               /* ── WIDGETS ── */
               .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px; }
@@ -613,7 +620,9 @@ app.get('/admin', async (req, res) => {
               .card { padding: 20px; text-align: center; }
               .card:hover { transform: var(--card-lift); box-shadow: var(--card-hover-shadow); border-color: var(--card-border-hover); }
               .card h3 { margin: 0; color: var(--text-muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; }
-              .card .value { font-size: 2rem; font-weight: var(--value-font-weight); margin-top: 10px; color: var(--text-strong); }
+              .card .value { font-size: 2rem; font-weight: var(--value-font-weight); margin-top: 10px; color: var(--text-strong); line-height: 1.15; max-width: 100%; overflow-wrap: normal; word-break: normal; padding: 0 0.08em; box-sizing: border-box; }
+              .card .value-text { font-size: clamp(1.15rem, 3.6vw, 1.75rem); letter-spacing: -0.01em; }
+              .card .card-sub { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; line-height: 1.35; }
               .card.fail .value { color: var(--danger); }
               .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
               .chart-container { padding: 20px; }
@@ -655,12 +664,22 @@ app.get('/admin', async (req, res) => {
                   body { padding: 12px; }
                   h1 { font-size: 1.5rem; }
                   h2 { font-size: 1.15rem; }
+                  /* Theme picker: give emoji + chevron room; tighten header stack */
+                  .dashboard-header { align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+                  .dashboard-header h1 { width: 100%; line-height: 1.2; }
+                  .theme-select {
+                      padding: 10px 42px 10px 18px;
+                      background-position: right 16px center;
+                      font-size: 0.95rem;
+                      min-height: 42px;
+                  }
                   /* KPI cards: two side by side instead of stacking vertically */
                   .cards { grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 24px; }
-                  .card { padding: 14px 10px; }
+                  .card { padding: 14px 12px; }
                   .card h3 { font-size: 0.7rem; }
-                  .card .value { font-size: 1.5rem; margin-top: 6px; }
-                  .card div[style*="font-size"] { font-size: 0.65rem !important; }
+                  .card .value { font-size: clamp(1.15rem, 5.2vw, 1.5rem); margin-top: 6px; }
+                  .card .value-text { font-size: clamp(1rem, 4.6vw, 1.35rem); }
+                  .card .card-sub, .card div[style*="font-size"] { font-size: 0.65rem !important; }
                   /* Charts stack in a single column */
                   .charts { grid-template-columns: 1fr; gap: 14px; }
                   .charts > .chart-container[style*="span 2"] { grid-column: auto !important; }
@@ -739,8 +758,8 @@ app.get('/admin', async (req, res) => {
                   </div>
                   <div class="card">
                       <h3>Next Event Day</h3>
-                      <div class="value">${nextReminderValue}</div>
-                      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">${nextReminderSubtitle}</div>
+                      <div class="value value-text">${nextReminderValue}</div>
+                      <div class="card-sub">${nextReminderSubtitle}</div>
                   </div>
               </div>
 

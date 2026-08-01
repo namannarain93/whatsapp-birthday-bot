@@ -3,32 +3,29 @@ const moment = require('moment-timezone');
 const { 
   pool,
   getAllActiveUsersWithTimezone,
-  getUpcomingBirthdaysForUser,
-  getNextNUpcomingBirthdays,
-  getTotalEventCount,
+  getBirthdaysForNextWeek,
   updateLastDailyUpcomingReminderSent
 } = require('../../db.js');
 const { sendTemplateMessage } = require('../services/whatsapp.service');
 const { isSundayReminderActive } = require('../db/user.repository');
 
 // Centralized WhatsApp template configuration
+// Body: "You have upcoming special events next week!\n\n{{1}}\n\nThese events are in your saved reminders."
 const TEMPLATE_CONFIG = {
-  name: 'weekly_birthday_reminders',
-  language: { code: 'en' }
+  name: 'event_details_reminder_1',
+  language: { code: 'en_US' }
 };
 
-// Format birthday list for template
+// Format event list for template {{1}}
+// e.g. "Tarin Poddar's birthday — 27 Jan, Priya & Rahul's anniversary — 29 Jan"
 function formatBirthdayList(birthdays) {
   if (birthdays.length === 0) {
     return '';
   }
 
   return birthdays.map(b => {
-    // Format as "Name – 23 Jan"
-    const day = b.day;
-    const month = b.month; // Already in short form (Jan, Feb, etc.)
-    const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
-    return `${b.name}${typeLabel} – ${day} ${month}`;
+    const label = b.type === 'anniversary' ? 'anniversary' : 'birthday';
+    return `${b.name}'s ${label} — ${b.day} ${b.month}`;
   }).join(', ');
 }
 
@@ -51,7 +48,7 @@ async function hasDailyUpcomingReminderBeenSentToday(phone, today) {
   return lastSent.isSame(today, 'day');
 }
 
-// Main daily upcoming reminder function
+// Main weekly upcoming reminder function (Sundays only, when next week has events)
 async function runDailyUpcomingBirthdaysJob() {
   const executionTimestamp = moment().toISOString();
   
@@ -99,36 +96,17 @@ async function runDailyUpcomingBirthdaysJob() {
           skippedCount++;
           continue;
         }
-        
-        const upcomingBirthdays = await getUpcomingBirthdaysForUser(phone, 7);
-        
-        let formattedList;
+
+        // Next calendar week = Monday–Sunday after the current ISO week
+        const upcomingBirthdays = await getBirthdaysForNextWeek(phone);
+
         if (upcomingBirthdays.length === 0) {
-          // Fetch next events beyond the 7-day window and total saved count
-          const [nextEvents, totalCount] = await Promise.all([
-            getNextNUpcomingBirthdays(phone, 5, 7),
-            getTotalEventCount(phone)
-          ]);
-          const nudgeCount = Math.max(0, 5 - totalCount);
-
-          let text = "No upcoming birthdays or anniversaries in the next 7 days.";
-
-          if (nextEvents.length > 0) {
-            const label = nextEvents.length === 1
-              ? "Your next event"
-              : `Here are the next ${nextEvents.length}`;
-            text += ` ${label}: ${formatBirthdayList(nextEvents)}.`;
-          }
-
-          if (nudgeCount > 0) {
-            const eventWord = totalCount === 1 ? 'event' : 'events';
-            text += ` You have ${totalCount} ${eventWord} saved — want to add ${nudgeCount} more? Just send me a name and date!`;
-          }
-
-          formattedList = text;
-        } else {
-          formattedList = formatBirthdayList(upcomingBirthdays);
+          console.log(`[WEEKLY_UPCOMING_REMINDER] ⏭️  Skipping ${phone} - no events next week`);
+          skippedCount++;
+          continue;
         }
+
+        const formattedList = formatBirthdayList(upcomingBirthdays);
         
         // Send template message
         await sendTemplateMessage(phone, TEMPLATE_CONFIG.name, [formattedList], TEMPLATE_CONFIG.language.code);
@@ -136,11 +114,7 @@ async function runDailyUpcomingBirthdaysJob() {
         // Update last sent timestamp (reusing the column name for now to avoid DB migration)
         await updateLastDailyUpcomingReminderSent(phone, today.toISOString());
         
-        if (upcomingBirthdays.length === 0) {
-          console.log(`[WEEKLY_UPCOMING_REMINDER] ✅ Sent weekly "no upcoming birthdays" message to ${phone}`);
-        } else {
-          console.log(`[WEEKLY_UPCOMING_REMINDER] ✅ Sent weekly upcoming reminder to ${phone} with ${upcomingBirthdays.length} upcoming birthday(s)`);
-        }
+        console.log(`[WEEKLY_UPCOMING_REMINDER] ✅ Sent weekly upcoming reminder to ${phone} with ${upcomingBirthdays.length} upcoming event(s)`);
         remindedCount++;
         
       } catch (err) {
@@ -159,7 +133,7 @@ async function runDailyUpcomingBirthdaysJob() {
 
 // Scheduler function
 function startDailyUpcomingReminderScheduler() {
-  console.log('[WEEKLY_UPCOMING_REMINDER] Starting scheduler - will check every 30 minutes (sends on Sundays at 9 AM)');
+  console.log('[WEEKLY_UPCOMING_REMINDER] Starting scheduler - will check every 30 minutes (sends on Sundays at 9 AM when next week has events)');
   
   runDailyUpcomingBirthdaysJob().catch(err => {
     console.error('[WEEKLY_UPCOMING_REMINDER] Initial run failed:', err);

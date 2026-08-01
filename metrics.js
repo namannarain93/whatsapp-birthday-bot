@@ -102,6 +102,9 @@ const TRACKED_TEMPLATES = [
   // historical and new sends are tracked.
   'event_details_reminder_3',
   'birthday_reminder',
+  // Weekly Sunday reminder: 'weekly_birthday_reminders' is legacy;
+  // 'event_details_reminder_1' is the current utility replacement.
+  'event_details_reminder_1',
   'weekly_birthday_reminders'
 ];
 
@@ -834,10 +837,10 @@ async function getRemindersSentToday() {
       SELECT
         COUNT(*) AS total,
         COUNT(*) FILTER (WHERE template_name IN ('birthday_reminder', 'event_details_reminder_3')) AS daily,
-        COUNT(*) FILTER (WHERE template_name = 'weekly_birthday_reminders') AS weekly
+        COUNT(*) FILTER (WHERE template_name IN ('weekly_birthday_reminders', 'event_details_reminder_1')) AS weekly
       FROM messages
       WHERE direction = 'outgoing'
-        AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders')
+        AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders', 'event_details_reminder_1')
         AND created_at >= CURRENT_DATE
     `);
     const row = result.rows[0];
@@ -919,7 +922,7 @@ async function getReminderDeliveryRate() {
         COUNT(*) FILTER (WHERE status = 'failed') AS failed
       FROM messages
       WHERE direction = 'outgoing'
-        AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders')
+        AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders', 'event_details_reminder_1')
     `);
     const row = result.rows[0];
     const total = parseInt(row.total) || 0;
@@ -945,7 +948,7 @@ async function getPostReminderEngagement() {
         SELECT DISTINCT recipient_phone, DATE(created_at) AS reminder_date
         FROM messages
         WHERE direction = 'outgoing'
-          AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders')
+          AND template_name IN ('birthday_reminder', 'event_details_reminder_3', 'weekly_birthday_reminders', 'event_details_reminder_1')
           AND created_at >= CURRENT_DATE - INTERVAL '30 days'
       ),
       engaged AS (

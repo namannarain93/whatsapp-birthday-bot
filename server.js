@@ -100,6 +100,7 @@ app.get('/admin', async (req, res) => {
     const unknownIntentRate = await metrics.getUnknownIntentRate();
     const recentUnknownMessages = await metrics.getRecentUnknownMessages();
     const remindersSentToday = await metrics.getRemindersSentToday();
+    const sundayRemindersSentThisWeek = await metrics.getSundayRemindersSentThisWeek();
     const nextReminderDate = await metrics.getNextReminderDate();
     const nextReminderValue = nextReminderDate
       ? (nextReminderDate.daysUntil === 1 ? 'Tomorrow' : `${nextReminderDate.daysUntil} days`)
@@ -797,6 +798,11 @@ app.get('/admin', async (req, res) => {
                       <h3>Sunday Reminder Active</h3>
                       <div class="value">${sundayReminderStats.active}</div>
                       <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">${sundayReminderStats.dormant} dormant · ${sundayReminderStats.total} total</div>
+                  </div>
+                  <div class="card">
+                      <h3>Sunday Reminders Sent</h3>
+                      <div class="value">${sundayRemindersSentThisWeek.count}</div>
+                      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">for ${sundayRemindersSentThisWeek.dateLabel}</div>
                   </div>
               </div>
 

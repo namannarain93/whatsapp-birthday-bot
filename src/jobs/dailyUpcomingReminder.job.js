@@ -13,7 +13,8 @@ const { isSundayReminderActive } = require('../db/user.repository');
 // Body: "You have upcoming special events next week!\n\n{{1}}\n\nThese events are in your saved reminders."
 const TEMPLATE_CONFIG = {
   name: 'event_details_reminder_1',
-  language: { code: 'en_US' }
+  // Meta template is "English" (en), not "English (US)" (en_US)
+  language: { code: 'en' }
 };
 
 // Format event list for template {{1}}

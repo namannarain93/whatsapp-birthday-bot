@@ -855,6 +855,32 @@ async function getRemindersSentToday() {
   }
 }
 
+// Sunday weekly reminders actually sent this week (Sun–Sat, IST), from messages log
+async function getSundayRemindersSentThisWeek() {
+  const weekSunday = moment().tz('Asia/Kolkata').startOf('day').day(0); // this week's Sunday
+  const dateLabel = weekSunday.format('ddd, MMM D');
+  try {
+    const result = await pool.query(
+      `
+      SELECT COUNT(*) AS count
+      FROM messages
+      WHERE direction = 'outgoing'
+        AND template_name IN ('event_details_reminder_1', 'weekly_birthday_reminders')
+        AND created_at >= $1::date
+      `,
+      [weekSunday.format('YYYY-MM-DD')]
+    );
+    return {
+      count: parseInt(result.rows[0].count) || 0,
+      date: weekSunday.format('YYYY-MM-DD'),
+      dateLabel
+    };
+  } catch (err) {
+    console.error('Error in getSundayRemindersSentThisWeek:', err);
+    return { count: 0, date: weekSunday.format('YYYY-MM-DD'), dateLabel };
+  }
+}
+
 // The next calendar day that has saved birthdays/anniversaries (recurring
 // annually-driven event day). Today's events are excluded — their reminders are
 // already in flight — so the card always looks ahead.
@@ -1357,6 +1383,7 @@ module.exports = {
   getRecentUnknownMessages,
   // Reminder effectiveness
   getRemindersSentToday,
+  getSundayRemindersSentThisWeek,
   getNextReminderDate,
   getReminderDeliveryRate,
   getPostReminderEngagement,

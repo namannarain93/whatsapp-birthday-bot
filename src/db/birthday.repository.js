@@ -243,9 +243,9 @@ async function birthdayExistsByName(phone, name, type = null) {
   return res.rowCount > 0;
 }
 
-// Update birthday
+// Update birthday. Returns true when an existing row was actually updated.
 async function updateBirthday(phone, name, day, month, type = 'birthday') {
-  await pool.query(
+  const res = await pool.query(
     `
     UPDATE birthdays
     SET day = $3, month = $4, type = $5
@@ -253,6 +253,7 @@ async function updateBirthday(phone, name, day, month, type = 'birthday') {
     `,
     [phone, name, day, month, type]
   );
+  return res.rowCount > 0;
 }
 
 // Update birthday name (rename)

@@ -47,6 +47,12 @@ async function processSaveLine(phone, line) {
   return { success: false, reason: 'parse_failed', line: trimmed };
 }
 
+// Words that signal the line is an instruction ("Edit:", "Remove Kamal 5 Aug",
+// "actually it's the 6th"), not a plain "Name + date" entry. Such messages must
+// go to the LLM, which understands commands and conversation context — blindly
+// saving these lines produces garbage entries like "Remove Kamal – Aug 5".
+const COMMAND_WORD_REGEX = /(^|[^a-z])(edit|edits|remove|delete|update|rename|change|correct|fix|wrong|mean|meant|instead|actually|not|no|list|search|find|help)([^a-z]|$)/i;
+
 // Process multi-line message and return results
 async function processMultilineMessage(phone, message) {
   const lines = message
@@ -56,6 +62,21 @@ async function processMultilineMessage(phone, message) {
 
   if (lines.length <= 1) {
     return null; // Not a multi-line message
+  }
+
+  // Defer to the LLM when any line looks like a command/correction rather
+  // than a plain "Name + date" entry.
+  if (lines.some(line => COMMAND_WORD_REGEX.test(line))) {
+    return null;
+  }
+
+  // Defer to the LLM when nothing parses as "Name + date" — the message is
+  // probably conversational text that happens to contain line breaks.
+  const anyLineParseable = lines.some(line =>
+    parseNameAndDate(line) || /^(.+?)\s+([A-Za-z]+)\s+(\d+)$/.test(line)
+  );
+  if (!anyLineParseable) {
+    return null;
   }
 
   const saved = [];

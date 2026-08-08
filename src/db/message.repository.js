@@ -42,6 +42,25 @@ async function updateMessageStatus(wamid, status, errorCode = null) {
   }
 }
 
+// Fetch the most recent messages exchanged with a user (both directions),
+// oldest first, so the LLM can interpret the current message in context.
+// Only looks at the last 2 hours: older context should not influence parsing.
+async function getRecentConversation(phone, limit = 6, excludeWamid = null) {
+  const res = await pool.query(
+    `SELECT direction, message_body
+     FROM messages
+     WHERE recipient_phone = $1
+       AND message_body IS NOT NULL
+       AND message_body <> ''
+       AND ($3::text IS NULL OR wamid IS NULL OR wamid <> $3)
+       AND created_at > NOW() - INTERVAL '2 hours'
+     ORDER BY created_at DESC, id DESC
+     LIMIT $2`,
+    [phone, limit, excludeWamid]
+  );
+  return res.rows.reverse();
+}
+
 // Update the parsed intent on an incoming message (for metrics)
 async function updateMessageIntent(wamid, intent) {
   if (!wamid || !intent) return;
@@ -56,4 +75,5 @@ module.exports = {
   saveReceivedMessage,
   updateMessageStatus,
   updateMessageIntent,
+  getRecentConversation,
 };

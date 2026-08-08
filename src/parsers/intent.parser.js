@@ -2,8 +2,8 @@
 
 const { parseIntentWithLLM } = require('../../llm.js');
 
-async function parseIntent(message) {
-  return await parseIntentWithLLM(message);
+async function parseIntent(message, options = {}) {
+  return await parseIntentWithLLM(message, options);
 }
 
 module.exports = {

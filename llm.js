@@ -4,6 +4,11 @@ const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// GPT-5.x reasoning models don't accept a temperature parameter; behavior is
+// steered via reasoning_effort instead ("none" = fastest, for simple text
+// tasks; "low" = a little thinking, for extraction/matching accuracy).
+const OPENAI_MODEL = 'gpt-5.6-luna';
+
 const BIRTHDAY_BOT_SCOPED_REPLY_SYSTEM_PROMPT = `
 You are a helpful WhatsApp assistant for a birthday & anniversary reminder bot.
 
@@ -38,8 +43,8 @@ async function rewriteForElderlyUser(text) {
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.2,
+      model: OPENAI_MODEL,
+      reasoning_effort: "none",
       messages: [
         {
           role: "system",
@@ -94,8 +99,8 @@ async function generateScopedBirthdayBotReply(userMessage) {
 
   try {
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.3,
+      model: OPENAI_MODEL,
+      reasoning_effort: "none",
       messages: [
         {
           role: "system",
@@ -116,23 +121,77 @@ async function generateScopedBirthdayBotReply(userMessage) {
   }
 }
 
-async function parseIntentWithLLM(message) {
-  if (!message || !message.trim()) {
-    return {
-      intent: 'unknown',
-      name: null,
-      day: null,
-      month: null,
-      query: null,
-      needs_clarification: false,
-      clarification_question: null
-    };
+const EMPTY_PARSE_RESULT = () => {
+  const action = {
+    intent: 'unknown',
+    event_type: 'birthday',
+    name: null,
+    new_name: null,
+    day: null,
+    month: null,
+    query: null,
+    needs_clarification: false,
+    clarification_question: null
+  };
+  return { ...action, actions: [action] };
+};
+
+const MONTH_NORMALIZATION_MAP = {
+  'jan': 'Jan', 'january': 'Jan',
+  'feb': 'Feb', 'february': 'Feb',
+  'mar': 'Mar', 'march': 'Mar',
+  'apr': 'Apr', 'april': 'Apr',
+  'may': 'May',
+  'jun': 'Jun', 'june': 'Jun',
+  'jul': 'Jul', 'july': 'Jul',
+  'aug': 'Aug', 'august': 'Aug',
+  'sep': 'Sep', 'september': 'Sep',
+  'oct': 'Oct', 'october': 'Oct',
+  'nov': 'Nov', 'november': 'Nov',
+  'dec': 'Dec', 'december': 'Dec'
+};
+
+function normalizeLLMAction(parsed) {
+  const action = {
+    intent: parsed.intent || 'unknown',
+    event_type: parsed.event_type || 'birthday',
+    name: parsed.name || null,
+    new_name: parsed.new_name || null,
+    day: parsed.day !== undefined && parsed.day !== null ? parseInt(parsed.day, 10) : null,
+    month: parsed.month || null,
+    query: parsed.query || null,
+    needs_clarification: parsed.needs_clarification === true,
+    clarification_question: parsed.clarification_question || null
+  };
+  if (action.month) {
+    action.month = MONTH_NORMALIZATION_MAP[action.month.toLowerCase()] || action.month;
   }
+  return action;
+}
+
+/**
+ * Parse the user's message into one or more structured actions.
+ *
+ * @param {string} message - the current incoming message
+ * @param {object} [options]
+ * @param {Array<{direction: string, message_body: string}>} [options.history]
+ *   Recent conversation (oldest first) used to resolve corrections and
+ *   follow-ups (e.g. "Shivani I mean" right after saving "Shivans").
+ *
+ * Returns the first action (backward compatible with single-intent callers)
+ * with an `actions` array attached containing every parsed action.
+ */
+async function parseIntentWithLLM(message, options = {}) {
+  if (!message || !message.trim()) {
+    return EMPTY_PARSE_RESULT();
+  }
+
+  const history = Array.isArray(options.history) ? options.history : [];
 
   try {
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0.1,
+      model: OPENAI_MODEL,
+      reasoning_effort: 'low',
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -164,12 +223,43 @@ Always respond in strict JSON.
 Never include explanations.
 Never include text outside JSON.
 
+### CONVERSATION CONTEXT RULES (IMPORTANT):
+You may receive a "Recent conversation" transcript (oldest first) before the current message.
+1. Use the recent conversation ONLY to understand what the CURRENT message refers to: corrections ("Shivani I mean", "no, the 6th"), follow-ups ("her birthday is in May"), or references ("change it to Mar 5").
+2. If the user corrects the NAME of a person just saved or mentioned (e.g. bot saved "Shivans" and user says "Shivani I mean" or "not Shivans, Shivani"), set intent = "rename" with name = the previously saved name and new_name = the corrected name. Do NOT treat it as a search or a new save.
+3. If the user corrects the DATE of a person just saved or mentioned, set intent = "update" with the name taken from the conversation and the new date.
+4. If the user asks to fix a person's date AND remove/forget the old wrong date of the SAME person, that is ONE single "update" action. Never emit a delete for a person you are also updating.
+5. ACCURACY FIRST: never pull a name or date from the conversation history unless the current message clearly refers back to it. The current message always wins over history. If the history does not clearly resolve the reference, set needs_clarification = true and ask.
+
+### MULTIPLE ACTIONS:
+1. A single message may contain SEVERAL separate requests (e.g. save two different people with different dates, or save one person and delete another, possibly on separate lines). Return one action per request, in the order the user wrote them.
+2. Most messages contain exactly ONE action.
+
 ### CLARIFICATION RULES (IMPORTANT):
 1. If the user's message is ambiguous, set needs_clarification = true and provide a short clarification_question.
 2. If the user provides a name/event but NO date, set intent = "save" (or "update"), keep the name and event_type, set day = null, month = null, needs_clarification = true, and ask for the date. Example: "When is Rohit and Shaanu's anniversary?"
 3. If the user provides a date but NO name, set needs_clarification = true and ask for the name.
 4. If the user mentions MULTIPLE separate people for a birthday in one message (e.g., "birthday of Aakriti and Aparanta"), treat them as sharing the same date, combine them into ONE name field joined by " and " (e.g., "Aakriti and Aparanta"). The system will handle splitting them later.
 5. Understand common slang/abbreviations: "nd" = "and", "bday" = "birthday", "anniv" = "anniversary".
+
+### WHEN TO CLARIFY — BE JUDICIOUS (IMPORTANT):
+Ask a clarification ONLY when acting without it could store, change, or delete the WRONG data:
+- a save/update is missing the name or the date
+- the date is impossible (e.g. Feb 30, day 32) or genuinely unreadable
+- a delete has no clear target ("delete everyone", "remove it" with no matching context)
+- a correction/reference that the conversation history does not resolve
+NEVER ask about things you can resolve yourself. Silently handle:
+- typos, spelling, casing, punctuation, emojis, extra polite words ("pls", "thanks", "can you")
+- any word order, slang, or mixed phrasing — just extract name + date
+- a year in the date ("Kamal 5 Aug 1990") — ignore the year, keep day and month
+- numeric dates like "5/8", "05-08", "5.8" — read as day/month (Indian convention): day 5, month Aug
+- ordinal words ("fifth of august") and formats like "aug 5th"
+Ask at most ONE short question. Never stack questions.
+
+### RELATIVE DATES:
+The current date is provided with each message. Resolve relative words against it:
+"today", "tomorrow", "day after tomorrow", "yesterday", "next Sunday", "in 3 days" → compute the actual day and month.
+If a relative date cannot be resolved reliably (e.g. "sometime next month"), ask for the exact date.
 
 ### FLEXIBLE INPUT RULES:
 1. Users may write dates and names in ANY order. All of these mean the same thing:
@@ -199,6 +289,7 @@ Supported intents:
 1. If the user asks "when is X's birthday?", "what date is X's bday?", "do you have X's birthday?", or any question asking to look up a person's birthday or anniversary, set intent = "search" and query = the person's name.
 2. Strip possessives ('s) and filler words ("birthday", "bday", "anniversary") from the query — only keep the person's name.
 3. If the user asks about their OWN birthday using self-referential words ("what is my birthday?", "when is my bday?", "do you have my birthday?"), set intent = "search", query = null, needs_clarification = true, and clarification_question = "What name is your birthday saved under?"
+4. If the message is ONLY a person's name with no date and no other words (e.g. "papa"), set intent = "search", query = that name, needs_clarification = false. The system looks it up and offers to save it if nothing is found — do NOT ask a clarification.
 
 ### SET_NAME RULES:
 1. If the user tells you their name (e.g., "My name is Anik", "I'm Anik", "Call me Anik"), set intent = "set_name" and extract the name.
@@ -206,23 +297,28 @@ Supported intents:
 
 OUTPUT FORMAT (always return this exact structure):
 {
-  "intent": "save | update | rename | delete | list_all | list_month | search | set_name | help | unknown",
-  "event_type": "birthday | anniversary",
-  "name": "string or null",
-  "new_name": "string or null (only for rename intent)",
-  "day": number or null,
-  "month": "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec or null",
-  "query": "string or null (for search intent)",
-  "needs_clarification": boolean,
-  "clarification_question": "string or null"
+  "actions": [
+    {
+      "intent": "save | update | rename | delete | list_all | list_month | search | set_name | help | unknown",
+      "event_type": "birthday | anniversary",
+      "name": "string or null",
+      "new_name": "string or null (only for rename intent)",
+      "day": number or null,
+      "month": "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec or null",
+      "query": "string or null (for search intent)",
+      "needs_clarification": boolean,
+      "clarification_question": "string or null"
+    }
+  ]
 }
+The "actions" array usually has ONE element. Only add more when the user clearly made several separate requests.
 
-EXAMPLES:
+EXAMPLES (in the shorthand below, "→ {...}" means respond with {"actions":[{...}]}):
 "Papa Dec 14th" → {"intent":"save","event_type":"birthday","name":"Papa","day":14,"month":"Dec","query":null,"needs_clarification":false,"clarification_question":null}
 "rename gunnu sankap to Gunnu Sankalp" → {"intent":"rename","event_type":"birthday","name":"gunnu sankap","new_name":"Gunnu Sankalp","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "rename anniversary of Papa to Papa & Mama" → {"intent":"rename","event_type":"anniversary","name":"Papa","new_name":"Papa & Mama","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "Mom and Dad anniversary Oct 12" → {"intent":"save","event_type":"anniversary","name":"Mom and Dad","day":12,"month":"Oct","query":null,"needs_clarification":false,"clarification_question":null}
-"Wedding anniv tomorrow" → {"intent":"save","event_type":"anniversary","name":"Wedding","day":30,"month":"Jan","query":null,"needs_clarification":false,"clarification_question":null}
+"Wedding anniv tomorrow" (if today is Jan 29) → {"intent":"save","event_type":"anniversary","name":"Wedding","day":30,"month":"Jan","query":null,"needs_clarification":false,"clarification_question":null}
 "delete papa" → {"intent":"delete","event_type":"birthday","name":"Papa","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "change name of save varun to varun" → {"intent":"rename","name":"save varun","new_name":"varun","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "change papa to dec 15" → {"intent":"update","name":"Papa","day":15,"month":"Dec","query":null,"needs_clarification":false,"clarification_question":null}
@@ -249,11 +345,56 @@ EXAMPLES:
 "when is papa's bday?" → {"intent":"search","event_type":"birthday","name":null,"day":null,"month":null,"query":"Papa","needs_clarification":false,"clarification_question":null}
 "do you have Rohit's anniversary?" → {"intent":"search","event_type":"anniversary","name":null,"day":null,"month":null,"query":"Rohit","needs_clarification":false,"clarification_question":null}
 "what is my birthday?" → {"intent":"search","event_type":"birthday","name":null,"day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"What name is your birthday saved under?"}
-"when is my anniversary?" → {"intent":"search","event_type":"anniversary","name":null,"day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"What name is your anniversary saved under?"}`.trim(),
+"when is my anniversary?" → {"intent":"search","event_type":"anniversary","name":null,"day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"What name is your anniversary saved under?"}
+
+MESSY INPUT EXAMPLES (interpret confidently, no clarification needed):
+"KAMAL BDAY 5 AUG!!!" → {"intent":"save","event_type":"birthday","name":"Kamal","day":5,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}
+"Kamal 5 Aug 1990" → {"intent":"save","event_type":"birthday","name":"Kamal","day":5,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}
+"Priya 12/4" → {"intent":"save","event_type":"birthday","name":"Priya","day":12,"month":"Apr","query":null,"needs_clarification":false,"clarification_question":null}
+"pls can u save neha ka bday 5th april thanks" → {"intent":"save","event_type":"birthday","name":"Neha","day":5,"month":"Apr","query":null,"needs_clarification":false,"clarification_question":null}
+"fifth of august is rakesh birthday 🎂" → {"intent":"save","event_type":"birthday","name":"Rakesh","day":5,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}
+
+MESSY INPUT EXAMPLES (clarification genuinely needed):
+"Ramesh 30 Feb" → {"intent":"save","event_type":"birthday","name":"Ramesh","day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"February has only 29 days at most — when is Ramesh's birthday?"}
+"delete everyone" → {"intent":"delete","event_type":"birthday","name":null,"day":null,"month":null,"query":null,"needs_clarification":true,"clarification_question":"Whose birthday should I delete?"}
+"🎂🎂🎂" → {"intent":"unknown","event_type":"birthday","name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}
+
+EXAMPLES WITH CONVERSATION CONTEXT:
+
+Recent conversation:
+User: 10th August - Shivans birthday
+Bot: I've saved Shivans's birthday on Aug 10. 🎂
+Current message: "Shivani I mean"
+→ {"actions":[{"intent":"rename","event_type":"birthday","name":"Shivans","new_name":"Shivani","day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}]}
+
+Recent conversation:
+User: Kamal 5 Aug
+Bot: I've saved Kamal's birthday on Aug 5. 🎂
+Current message: "Edit:
+Kamal is 6 Aug
+Remove Kamal 5 Aug"
+→ {"actions":[{"intent":"update","event_type":"birthday","name":"Kamal","new_name":null,"day":6,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}]}
+(fixing a wrong date is ONE update action — do NOT also delete the person)
+
+Recent conversation:
+User: when is Meera's birthday?
+Bot: Meera's birthday is on Mar 4.
+Current message: "change it to Mar 5"
+→ {"actions":[{"intent":"update","event_type":"birthday","name":"Meera","new_name":null,"day":5,"month":"Mar","query":null,"needs_clarification":false,"clarification_question":null}]}
+
+Recent conversation:
+User: Papa Dec 14
+Bot: I've saved Papa's birthday on Dec 14. 🎂
+Current message: "no it's the 15th"
+→ {"actions":[{"intent":"update","event_type":"birthday","name":"Papa","new_name":null,"day":15,"month":"Dec","query":null,"needs_clarification":false,"clarification_question":null}]}
+
+MULTI-ACTION EXAMPLE (no context needed):
+"Save Riya 3 May and delete Arjun"
+→ {"actions":[{"intent":"save","event_type":"birthday","name":"Riya","new_name":null,"day":3,"month":"May","query":null,"needs_clarification":false,"clarification_question":null},{"intent":"delete","event_type":"birthday","name":"Arjun","new_name":null,"day":null,"month":null,"query":null,"needs_clarification":false,"clarification_question":null}]}`.trim(),
         },
         {
           role: 'user',
-          content: `User message: "${message}"`,
+          content: buildParseUserContent(message, history),
         },
       ],
     });
@@ -261,54 +402,43 @@ EXAMPLES:
     const content = response.choices[0].message.content.trim();
     const parsed = JSON.parse(content);
 
-    // Ensure all required fields exist with defaults
-    const result = {
-      intent: parsed.intent || 'unknown',
-      event_type: parsed.event_type || 'birthday',
-      name: parsed.name || null,
-      new_name: parsed.new_name || null,
-      day: parsed.day !== undefined && parsed.day !== null ? parseInt(parsed.day, 10) : null,
-      month: parsed.month || null,
-      query: parsed.query || null,
-      needs_clarification: parsed.needs_clarification === true,
-      clarification_question: parsed.clarification_question || null
-    };
+    // Accept both the new {"actions":[...]} format and a legacy single object.
+    const rawActions = Array.isArray(parsed.actions) && parsed.actions.length > 0
+      ? parsed.actions
+      : [parsed];
+    const actions = rawActions.slice(0, 8).map(normalizeLLMAction);
 
-    // Normalize month to proper case (Jan, Feb, etc.)
-    if (result.month) {
-      const monthLower = result.month.toLowerCase();
-      const monthMap = {
-        'jan': 'Jan', 'january': 'Jan',
-        'feb': 'Feb', 'february': 'Feb',
-        'mar': 'Mar', 'march': 'Mar',
-        'apr': 'Apr', 'april': 'Apr',
-        'may': 'May',
-        'jun': 'Jun', 'june': 'Jun',
-        'jul': 'Jul', 'july': 'Jul',
-        'aug': 'Aug', 'august': 'Aug',
-        'sep': 'Sep', 'september': 'Sep',
-        'oct': 'Oct', 'october': 'Oct',
-        'nov': 'Nov', 'november': 'Nov',
-        'dec': 'Dec', 'december': 'Dec'
-      };
-      result.month = monthMap[monthLower] || result.month;
-    }
-
-    console.log('🤖 LLM parsed intent:', result);
+    const result = { ...actions[0], actions };
+    console.log('🤖 LLM parsed intent:', JSON.stringify(actions));
     return result;
   } catch (err) {
     console.error('❌ LLM parse failed:', err.message);
     // Return safe default on parse failure
-    return {
-      intent: 'unknown',
-      name: null,
-      day: null,
-      month: null,
-      query: null,
-      needs_clarification: false,
-      clarification_question: null
-    };
+    return EMPTY_PARSE_RESULT();
   }
+}
+
+// Build the user-role content for intent parsing: today's date (so relative
+// dates like "tomorrow" resolve), an optional short transcript of the recent
+// conversation, and the current message.
+function buildParseUserContent(message, history) {
+  const today = new Date().toLocaleDateString('en-IN', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    timeZone: 'Asia/Kolkata'
+  });
+  let content = `Today's date: ${today}\n\n`;
+  if (history.length > 0) {
+    const transcript = history
+      .map(m => {
+        const speaker = m.direction === 'incoming' ? 'User' : 'Bot';
+        const body = String(m.message_body || '').slice(0, 300);
+        return `${speaker}: ${body}`;
+      })
+      .join('\n');
+    content += `Recent conversation (oldest first):\n${transcript}\n\n`;
+  }
+  content += `Current user message: "${message}"`;
+  return content;
 }
 
 /**
@@ -320,8 +450,8 @@ async function searchNameWithLLM(query, nameList) {
 
   try {
     const response = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0,
+      model: OPENAI_MODEL,
+      reasoning_effort: 'low',
       response_format: { type: 'json_object' },
       messages: [
         {
@@ -367,8 +497,8 @@ async function generateDailyMetricsSummary(snapshot) {
   console.log("🤖 OpenAI daily metrics summary called");
 
   const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0.3,
+    model: OPENAI_MODEL,
+    reasoning_effort: "low",
     messages: [
       {
         role: "system",

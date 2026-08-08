@@ -95,6 +95,19 @@ function normalizeMonthToShort(token) {
   return CANONICAL_TO_SHORT[canonical] || null;
 }
 
+// Max valid day per month. Feb allows 29 because stored dates have no year.
+const DAYS_IN_MONTH = {
+  Jan: 31, Feb: 29, Mar: 31, Apr: 30, May: 31, Jun: 30,
+  Jul: 31, Aug: 31, Sep: 30, Oct: 31, Nov: 30, Dec: 31
+};
+
+// Returns the number of days in the given month (any spelling), or null if
+// the month is not recognized.
+function getDaysInMonth(monthToken) {
+  const short = normalizeMonthToShort(monthToken);
+  return short ? DAYS_IN_MONTH[short] : null;
+}
+
 function getCurrentMonthName() {
   const months = ['January', 'February', 'March', 'April', 'May', 'June', 
                   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -153,6 +166,7 @@ module.exports = {
   getMonthOrderNumber,
   toDisplayMonthName,
   normalizeMonthToShort,
+  getDaysInMonth,
   getCurrentMonthName,
   getCurrentMonthAbbrev,
   extractMonthFromText

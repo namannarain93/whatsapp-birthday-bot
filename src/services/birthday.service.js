@@ -119,18 +119,23 @@ async function deleteBirthdayForUser(phone, inputName, type = null) {
   }
 }
 
-// Update birthday for a user
+// Update birthday for a user. If nobody by that name exists yet, fall back to
+// saving — never claim an update happened when no row was touched.
 async function updateBirthdayForUser(phone, name, day, month, type = 'birthday') {
   const normalizedMonth = normalizeMonthToShort(month);
   if (!normalizedMonth) {
     return { success: false };
   }
 
-  await updateBirthday(phone, name, day, normalizedMonth, type);
-  const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
-  const reply = await safeRewrite(`I've updated ${name}'s ${eventName} to ${normalizedMonth} ${day}.`);
-  await sendWhatsAppMessage(phone, reply);
-  return { success: true };
+  const updated = await updateBirthday(phone, name, day, normalizedMonth, type);
+  if (updated) {
+    const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
+    const reply = await safeRewrite(`I've updated ${name}'s ${eventName} to ${normalizedMonth} ${day}.`);
+    await sendWhatsAppMessage(phone, reply);
+    return { success: true };
+  }
+
+  return await saveBirthdayForUser(phone, name, day, normalizedMonth, type);
 }
 
 // Rename person for a user

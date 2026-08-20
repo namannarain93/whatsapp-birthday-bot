@@ -14,7 +14,8 @@ const {
   renamePersonForUser,
   listBirthdaysForUser,
   listBirthdaysForMonth,
-  fuzzySearchBirthdayByName
+  fuzzySearchBirthdayByName,
+  updateRelationshipForUser
 } = require('../services/birthday.service');
 const { formatBirthdaysChronologically } = require('../formatters/birthday.formatter');
 const {
@@ -44,6 +45,38 @@ function stripFillerWords(name) {
 
 // Replies that mean "drop it" — never treat these as a name.
 const CANCEL_REPLY_REGEX = /^(no|nope|nah|na|cancel|stop|skip|leave it|forget it|never ?mind|don'?t|nothing)[\s!.]*$/i;
+const AGE_QUESTION_REGEX = /\b(how old|what(?:'s| is) (?:her|his|their) age|age of|what age)\b/i;
+const PRONOUN_QUERY_REGEX = /^(she|he|they|her|him|them)$/i;
+
+function extractAgeQueryFromMessage(message) {
+  const match = String(message || '').match(
+    /\b(?:how old is|age of|what(?:'s| is) (?:the )?age of)\s+(?:my\s+)?(.+?)\s*\??$/i
+  );
+  if (!match) return null;
+  const query = match[1].trim().replace(/[.!?]+$/g, '');
+  if (!query || PRONOUN_QUERY_REGEX.test(query)) return null;
+  return query;
+}
+
+// "how old is she?" → the person the bot just saved or looked up.
+function extractLastPersonFromHistory(history) {
+  if (!Array.isArray(history)) return null;
+  const patterns = [
+    /(?:saved|updated)\s+(.+?)(?:'s)\s+(?:birthday|anniversary)/i,
+    /(.+?)(?:'s)\s+(?:birthday|anniversary)\s+is on/i,
+    /I don't have\s+(.+?)(?:'s)\s+(?:birthday|anniversary)/i
+  ];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const body = String(history[i].message_body || '');
+    for (const re of patterns) {
+      const match = body.match(re);
+      if (!match || !match[1]) continue;
+      const name = match[1].replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+      if (name && name.length < 80 && !PRONOUN_QUERY_REGEX.test(name)) return name;
+    }
+  }
+  return null;
+}
 
 /**
  * Clean a clarification reply that should contain just a person's name.
@@ -334,7 +367,7 @@ async function handleIncomingMessage(req, res) {
     // the user's next reply is interpreted against a single pending action.
     let anyHandled = false;
     for (const action of actions) {
-      const outcome = await handleParsedAction(phone, message, action, actions.length === 1);
+      const outcome = await handleParsedAction(phone, message, action, actions.length === 1, history);
       if (outcome === 'clarify') {
         anyHandled = true;
         break;
@@ -345,10 +378,10 @@ async function handleIncomingMessage(req, res) {
     }
 
     if (!anyHandled) {
-      // Guardrail: unknown/out-of-scope -> acknowledge + redirect back to birthdays/anniversaries
-      const scoped = await generateScopedBirthdayBotReply(message);
-      const fallback = await safeRewrite(scoped);
-      await sendWhatsAppMessage(phone, fallback);
+      // ChatGPT-style fallback: keep the conversational voice. Do not run the
+      // elderly rewrite on top — that flattens it into a canned redirect.
+      const scoped = await generateScopedBirthdayBotReply(message, { history });
+      await sendWhatsAppMessage(phone, scoped);
     }
     return res.sendStatus(200);
 
@@ -375,13 +408,45 @@ function getInvalidDateClarification(parsed) {
   return null;
 }
 
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// "12/4" is either 12 Apr or 4 Dec. Never guess — that would save a wrong date.
+function getAmbiguousNumericDateClarification(message, parsed) {
+  if (parsed.intent !== 'save' && parsed.intent !== 'update') return null;
+  if (!parsed.day || !parsed.month) return null;
+  const match = String(message || '').match(/\b(\d{1,2})[/\-.](\d{1,2})\b/);
+  if (!match) return null;
+  const first = parseInt(match[1], 10);
+  const second = parseInt(match[2], 10);
+  if (first < 1 || second < 1 || first > 12 || second > 12 || first === second) {
+    return null;
+  }
+  const person = parsed.name ? `${parsed.name}'s ` : '';
+  const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
+  return `I don't want to save the wrong date. Is ${person}${eventName} ${first} ${SHORT_MONTHS[second - 1]} or ${second} ${SHORT_MONTHS[first - 1]}?`;
+}
+
 /**
  * Execute a single parsed action.
  * Returns 'handled' when a reply was sent, 'clarify' when a clarification
  * question was asked (pending action stored), or 'fallthrough' when nothing
  * could be done (caller decides whether to send the scoped fallback reply).
  */
-async function handleParsedAction(phone, message, parsed, isOnlyAction) {
+async function handleParsedAction(phone, message, parsed, isOnlyAction, history = []) {
+    if (AGE_QUESTION_REGEX.test(message)) {
+      parsed.intent = 'search';
+      parsed.wants_age = true;
+      parsed.needs_clarification = false;
+      parsed.clarification_question = null;
+      if (!parsed.query || PRONOUN_QUERY_REGEX.test(String(parsed.query).trim())) {
+        parsed.query = extractAgeQueryFromMessage(message)
+          || parsed.name
+          || extractLastPersonFromHistory(history)
+          || null;
+      }
+    }
+
     // Catch self-referential names the LLM might not flag (e.g. "my birthday", "remind me")
     const selfReferentialNames = ['my', 'me', 'i', 'mine', 'myself', 'user', 'self'];
     const isSelfReferentialName = (
@@ -514,6 +579,24 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
           return 'clarify';
         }
 
+        const ambiguousDate = getAmbiguousNumericDateClarification(message, parsed);
+        if (ambiguousDate) {
+          await setPendingAction(phone, {
+            intent: 'save',
+            event_type: parsed.event_type || 'birthday',
+            name: parsed.name,
+            day: null,
+            month: null,
+            year: parsed.year || null,
+            relationship: parsed.relationship || null,
+            missing_field: 'date',
+            created_at: new Date().toISOString()
+          });
+          const clarification = await safeRewrite(ambiguousDate);
+          await sendWhatsAppMessage(phone, clarification);
+          return 'clarify';
+        }
+
         // Backstop: never save an impossible date — ask for the right one
         const saveDateProblem = getInvalidDateClarification(parsed);
         if (saveDateProblem) {
@@ -546,6 +629,11 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
         break;
 
       case 'update':
+        if (parsed.name && parsed.relationship && !parsed.day && !parsed.month) {
+          await updateRelationshipForUser(phone, parsed.name, parsed.relationship);
+          return 'handled';
+        }
+
         // Validate required fields
         if (!parsed.name || !parsed.day || !parsed.month) {
           const eventName = parsed.event_type === 'anniversary' ? 'anniversary' : 'birthday';
@@ -573,6 +661,24 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
             created_at: new Date().toISOString()
           });
           const clarification = await safeRewrite(updateClarificationMsg);
+          await sendWhatsAppMessage(phone, clarification);
+          return 'clarify';
+        }
+
+        const ambiguousUpdateDate = getAmbiguousNumericDateClarification(message, parsed);
+        if (ambiguousUpdateDate) {
+          await setPendingAction(phone, {
+            intent: 'update',
+            event_type: parsed.event_type || 'birthday',
+            name: parsed.name,
+            day: null,
+            month: null,
+            year: parsed.year || null,
+            relationship: parsed.relationship || null,
+            missing_field: 'date',
+            created_at: new Date().toISOString()
+          });
+          const clarification = await safeRewrite(ambiguousUpdateDate);
           await sendWhatsAppMessage(phone, clarification);
           return 'clarify';
         }
@@ -677,8 +783,15 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
         return 'handled';
 
       case 'search':
-        // Validate query
         if (!parsed.query || parsed.query.trim().length === 0) {
+          parsed.query = extractLastPersonFromHistory(history);
+        }
+        // Age/"who?" follow-ups with no name: let the conversational bot use
+        // the transcript instead of a canned "What should I search for?"
+        if (!parsed.query || parsed.query.trim().length === 0) {
+          if (parsed.wants_age) {
+            return 'fallthrough';
+          }
           await setPendingAction(phone, {
             intent: 'search',
             event_type: parsed.event_type || 'birthday',
@@ -698,7 +811,11 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
           break;
         }
         
-        const fuzzyResult = await fuzzySearchBirthdayByName(phone, searchQuery);
+        const fuzzyResult = await fuzzySearchBirthdayByName(
+          phone,
+          searchQuery,
+          parsed.wants_age ? { mode: 'age' } : {}
+        );
         if (fuzzyResult.found) {
           return 'handled';
         }

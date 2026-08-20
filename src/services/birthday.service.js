@@ -20,6 +20,7 @@ const { parseNameAndDate } = require('../parsers/date.parser');
 const { extractNamesFromDeleteInput } = require('../parsers/date.parser');
 const { safeRewrite, sendWhatsAppMessage } = require('./whatsapp.service');
 const { searchNameWithLLM } = require('../../llm.js');
+const { computeCurrentAge, isBirthdayToday } = require('../utils/age.utils');
 
 // Save a birthday for a user. extras: { year, relationship } (both optional).
 async function saveBirthdayForUser(phone, name, day, month, type = 'birthday', extras = {}) {
@@ -289,41 +290,58 @@ async function listUpcomingBirthdaysForUser(phone) {
 }
 
 // Search birthdays by name using LLM for accurate matching
-async function fuzzySearchBirthdayByName(phone, query) {
-  // Get all birthdays for this user
+async function findBirthdaysByQuery(phone, query) {
   const allBirthdays = await getAllBirthdays(phone);
-  
-  if (allBirthdays.length === 0) {
-    return { found: false };
-  }
+  if (!query || allBirthdays.length === 0) return [];
 
-  // A relationship match ("when is mom's birthday?" with relationship "Mom")
-  // is exact and cheap — check it before involving the LLM.
   const queryLower = query.trim().toLowerCase();
-  let matches = allBirthdays.filter(
+  const relationshipMatches = allBirthdays.filter(
     b => b.relationship && b.relationship.toLowerCase() === queryLower
   );
+  if (relationshipMatches.length > 0) return relationshipMatches;
 
-  if (matches.length === 0) {
-    // Use LLM to find genuine matches from the name list
-    const nameList = allBirthdays.map(b => b.name);
-    const matchedNames = await searchNameWithLLM(query, nameList);
+  const nameList = allBirthdays.map(b => b.name);
+  const matchedNames = await searchNameWithLLM(query, nameList);
+  if (matchedNames.length === 0) return [];
 
-    if (matchedNames.length === 0) {
-      return { found: false };
+  const matchedNamesLower = new Set(matchedNames.map(n => n.toLowerCase()));
+  return allBirthdays.filter(b => matchedNamesLower.has(b.name.toLowerCase()));
+}
+
+function formatAgeReply(matches) {
+  if (matches.length === 1) {
+    const b = matches[0];
+    const age = computeCurrentAge(b.year, b.day, b.month);
+    if (age == null) {
+      return `I have ${b.name}'s birthday on ${b.month} ${b.day}, but no birth year, so I can't tell their age. Send the year if you'd like me to save it.`;
     }
-
-    // Map matched names back to full birthday objects
-    const matchedNamesLower = new Set(matchedNames.map(n => n.toLowerCase()));
-    matches = allBirthdays.filter(b => matchedNamesLower.has(b.name.toLowerCase()));
+    if (isBirthdayToday(b.day, b.month)) {
+      return `${b.name} turns ${age} today. 🎂`;
+    }
+    return `${b.name} is ${age}.`;
   }
 
+  const list = matches.map(b => {
+    const age = computeCurrentAge(b.year, b.day, b.month);
+    const ageText = age == null ? 'no year saved' : `${age}`;
+    return `• ${b.name} – ${ageText}`;
+  }).join('\n');
+  return `I found more than one match:\n\n${list}`;
+}
+
+async function fuzzySearchBirthdayByName(phone, query, options = {}) {
+  const matches = await findBirthdaysByQuery(phone, query);
   if (matches.length === 0) {
     return { found: false };
+  }
+
+  if (options.mode === 'age') {
+    const reply = await safeRewrite(formatAgeReply(matches));
+    await sendWhatsAppMessage(phone, reply);
+    return { found: true, count: matches.length };
   }
 
   if (matches.length === 1) {
-    // Single match - return formatted response
     const b = matches[0];
     const eventName = b.type === 'anniversary' ? 'anniversary' : 'birthday';
     const emoji = b.type === 'anniversary' ? '💍' : '🎂';
@@ -332,17 +350,37 @@ async function fuzzySearchBirthdayByName(phone, query) {
     const reply = await safeRewrite(`${b.name}${rel}'s ${eventName} is on ${b.month} ${b.day}${born}. ${emoji}`);
     await sendWhatsAppMessage(phone, reply);
     return { found: true, count: 1 };
-  } else {
-    // Multiple matches - return list
-    const list = matches.map(b => {
-      const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
-      const rel = b.relationship ? ` (${b.relationship})` : '';
-      return `• ${b.name}${rel} – ${b.month} ${b.day}${typeLabel}`;
-    }).join('\n');
-    const reply = await safeRewrite(`I found these matches:\n\n${list}`);
-    await sendWhatsAppMessage(phone, reply);
-    return { found: true, count: matches.length };
   }
+
+  const list = matches.map(b => {
+    const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
+    const rel = b.relationship ? ` (${b.relationship})` : '';
+    return `• ${b.name}${rel} – ${b.month} ${b.day}${typeLabel}`;
+  }).join('\n');
+  const reply = await safeRewrite(`I found these matches:\n\n${list}`);
+  await sendWhatsAppMessage(phone, reply);
+  return { found: true, count: matches.length };
+}
+
+async function updateRelationshipForUser(phone, name, relationship) {
+  const matches = await findBirthdaysByQuery(phone, name);
+  if (matches.length === 0) {
+    const reply = await safeRewrite(`I could not find ${name}'s birthday to add that relationship.`);
+    await sendWhatsAppMessage(phone, reply);
+    return { success: false };
+  }
+  if (matches.length > 1) {
+    const list = matches.map(b => `• ${b.name} – ${b.month} ${b.day}`).join('\n');
+    const reply = await safeRewrite(`I found more than one match for "${name}":\n\n${list}\n\nWhich person did you mean?`);
+    await sendWhatsAppMessage(phone, reply);
+    return { success: false };
+  }
+
+  const b = matches[0];
+  await updateBirthdayDetails(phone, b.name, b.day, b.month, b.type, { relationship });
+  const reply = await safeRewrite(`I've noted ${b.name} as your ${relationship}.`);
+  await sendWhatsAppMessage(phone, reply);
+  return { success: true };
 }
 
 module.exports = {
@@ -357,6 +395,7 @@ module.exports = {
   searchBirthdayByName,
   searchBirthdaysByDate,
   listUpcomingBirthdaysForUser,
-  fuzzySearchBirthdayByName
+  fuzzySearchBirthdayByName,
+  updateRelationshipForUser
 };
 

@@ -1,4 +1,5 @@
 const { pool } = require('./pool');
+const { applyReviewedBirthdayFixes } = require('./reviewed-birthday-fixes');
 
 // Create tables on startup (exported as dbReady so callers can await it)
 const dbReady = (async () => {
@@ -186,6 +187,15 @@ const dbReady = (async () => {
       );
     `);
     console.log('✅ Monthly active-user snapshots table ensured');
+
+    try {
+      const summary = await applyReviewedBirthdayFixes(pool);
+      console.log(
+        `✅ Reviewed birthday fixes applied (updated ${summary.updated}, merged ${summary.merged}, deleted ${summary.deleted}, skipped ${summary.skipped})`
+      );
+    } catch (fixErr) {
+      console.error('Reviewed birthday fixes failed:', fixErr);
+    }
     
     console.log('Database tables ready (Postgres)');
   } catch (err) {

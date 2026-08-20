@@ -56,3 +56,16 @@ test('rejects arbitrary relationship labels even when the LLM emits them', () =>
   );
   assert.equal(action.relationship, null);
 });
+
+test('accepts family friend when the user stated it', () => {
+  const action = normalizeLLMAction(
+    {
+      intent: 'update',
+      name: 'Kalyani kala',
+      relationship: 'family friend'
+    },
+    'Kalyani kala is my family friend'
+  );
+  assert.equal(action.relationship, 'family friend');
+  assert.equal(action.name, 'Kalyani kala');
+});

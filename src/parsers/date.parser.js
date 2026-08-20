@@ -17,8 +17,14 @@ const RELATIONSHIP_LABELS = new Set([
   'sister', 'brother', 'daughter', 'son',
   'aunt', 'aunty', 'uncle',
   'grandmother', 'grandma', 'grandfather', 'grandpa',
-  'cousin'
+  'cousin',
+  'friend', 'family friend', 'best friend',
+  'colleague', 'coworker', 'neighbour', 'neighbor'
 ]);
+
+function relationshipLabelsLongestFirst() {
+  return [...RELATIONSHIP_LABELS].sort((a, b) => b.length - a.length);
+}
 
 function normalizeRelationship(value) {
   if (!value || typeof value !== 'string') return null;
@@ -41,18 +47,22 @@ function splitRelationshipFromName(value) {
     if (left && relationship) return { name: left, relationship };
   }
 
-  const myPrefix = original.match(/^my\s+([A-Za-z]+)\s+(.+)$/i);
-  if (myPrefix) {
-    const relationship = normalizeRelationship(myPrefix[1]);
-    const name = myPrefix[2].trim();
-    if (relationship && name) return { name, relationship };
+  for (const label of relationshipLabelsLongestFirst()) {
+    const prefix = original.match(new RegExp(`^my\\s+(${label})\\s+(.+)$`, 'i'));
+    if (prefix) {
+      const relationship = normalizeRelationship(prefix[1]);
+      const name = prefix[2].trim();
+      if (relationship && name) return { name, relationship };
+    }
   }
 
-  const trailing = original.match(/^(.+?)\s+([A-Za-z]+)$/);
-  if (trailing) {
-    const name = trailing[1].trim();
-    const relationship = normalizeRelationship(trailing[2]);
-    if (name && relationship) return { name, relationship };
+  for (const label of relationshipLabelsLongestFirst()) {
+    const trailing = original.match(new RegExp(`^(.+?)\\s+(${label})$`, 'i'));
+    if (trailing) {
+      const name = trailing[1].trim();
+      const relationship = normalizeRelationship(trailing[2]);
+      if (name && relationship) return { name, relationship };
+    }
   }
 
   return { name: original, relationship: null };

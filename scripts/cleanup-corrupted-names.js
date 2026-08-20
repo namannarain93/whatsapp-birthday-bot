@@ -255,6 +255,15 @@ async function main() {
 }
 
 if (require.main === module) {
+  if (!process.env.DATABASE_URL) {
+    console.error(
+      'Cleanup failed: this computer does not have DATABASE_URL, so it cannot reach the live birthday database.\n' +
+      'Copy DATABASE_URL from your hosting dashboard (the same place WHATSAPP_TOKEN lives),\n' +
+      'put it in a .env file in this project folder, then run the command again.'
+    );
+    process.exit(1);
+  }
+
   main()
     .catch(err => {
       console.error('Cleanup failed:', err.message);

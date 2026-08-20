@@ -56,6 +56,18 @@ function isHelpMenuRequest(message) {
   return HELP_MENU_REQUEST_REGEX.test(String(message || '').trim());
 }
 
+const AGE_IN_REMINDERS_REPLY = 'Yes — if a year is saved, reminders include age.';
+const PERSON_AGE_LOOKUP_REGEX =
+  /\b(how old is|age of|what(?:'s| is) (?:her|his|their) age|what(?:'s| is) (?:the )?age of)\b/i;
+
+// "can you include age in reminders?" is a product question, not a lookup.
+function isAgeInRemindersCapabilityQuestion(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  if (PERSON_AGE_LOOKUP_REGEX.test(text)) return false;
+  return /\bage\b/i.test(text) && /\b(remind(?:er|ing|ers)?s?|upcoming)\b/i.test(text);
+}
+
 function extractAgeQueryFromMessage(message) {
   const match = String(message || '').match(
     /\b(?:how old is|age of|what(?:'s| is) (?:the )?age of)\s+(?:my\s+)?(.+?)\s*\??$/i
@@ -355,6 +367,15 @@ async function handleIncomingMessage(req, res) {
     if (isHelpCommand) {
       await sendHelpMessage(phone);
       await updateMessageIntent(wamid, 'help');
+      return res.sendStatus(200);
+    }
+
+    // Product fact: reminders already include age when a year is saved.
+    // Do not send this to the chat model — it will personalize from the
+    // transcript (name someone, claim the year is missing, quote that year).
+    if (isAgeInRemindersCapabilityQuestion(message)) {
+      await sendWhatsAppMessage(phone, AGE_IN_REMINDERS_REPLY);
+      await updateMessageIntent(wamid, 'capability');
       return res.sendStatus(200);
     }
 

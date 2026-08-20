@@ -29,6 +29,7 @@ function createHarness(overrides = {}) {
     }),
     getPendingAction: async () => null,
     birthdayExists: async () => false,
+    getAllBirthdays: async () => [],
     saveBirthday: async (phone, name, day, month, type) => {
       savedBirthdays.push({ phone, name, day, month, type });
     },
@@ -116,8 +117,9 @@ test('a bare "help" mid-onboarding still shows the help menu', async () => {
   assert.equal(calls.completeOnboarding, 0);
 });
 
-test('a capability question does not dump the help menu even if the parser says help', async () => {
-  const { sent, webhook } = createHarness({
+test('age in reminders is a general yes — no name, no missing-year, no real date example', async () => {
+  let scopedCalls = 0;
+  const { sent, intents, webhook } = createHarness({
     onboardingState: {
       onboarding_step: 0,
       onboarding_last_sent_at: null,
@@ -125,15 +127,40 @@ test('a capability question does not dump the help menu even if the parser says 
       onboarding_parse_failures: 0
     },
     parseIntentWithLLM: async () => ({ intent: 'help' }),
-    generateScopedBirthdayBotReply: async () =>
-      'Yes — if a birth year is saved, the reminder includes the age they are turning.'
+    generateScopedBirthdayBotReply: async () => {
+      scopedCalls += 1;
+      return 'Kalyani Kala 27 Aug 1997';
+    }
   });
 
   await webhook('Can you tell me age also when reminding of upcoming birthday');
 
   assert.equal(sent.length, 1);
-  assert.doesNotMatch(sent[0], /4 simple commands/);
-  assert.match(sent[0], /birth year is saved/);
+  assert.equal(sent[0], 'Yes — if a year is saved, reminders include age.');
+  assert.equal(intents.at(-1), 'capability');
+  assert.equal(scopedCalls, 0);
+  assert.doesNotMatch(sent[0], /Kalyani|1997|I don't have/i);
+});
+
+test('how old is X is not treated as an age-in-reminders capability question', async () => {
+  const { sent, webhook } = createHarness({
+    onboardingState: {
+      onboarding_step: 0,
+      onboarding_last_sent_at: null,
+      onboarding_nudge_count: 0,
+      onboarding_parse_failures: 0
+    },
+    parseIntentWithLLM: async () => ({
+      intent: 'search',
+      query: 'Kalyani',
+      wants_age: true
+    }),
+    generateScopedBirthdayBotReply: async () => 'fallback'
+  });
+
+  await webhook('how old is Kalyani');
+
+  assert.notEqual(sent[0], 'Yes — if a year is saved, reminders include age.');
 });
 
 test('"what can you do" still shows the command menu', async () => {

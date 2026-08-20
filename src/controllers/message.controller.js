@@ -47,6 +47,14 @@ function stripFillerWords(name) {
 const CANCEL_REPLY_REGEX = /^(no|nope|nah|na|cancel|stop|skip|leave it|forget it|never ?mind|don'?t|nothing)[\s!.]*$/i;
 const AGE_QUESTION_REGEX = /\b(how old|what(?:'s| is) (?:her|his|their) age|age of|what age)\b/i;
 const PRONOUN_QUERY_REGEX = /^(she|he|they|her|him|them)$/i;
+// Dump the command menu only when the user actually asked for it. A capability
+// question ("can you include age in reminders?") is not help.
+const HELP_MENU_REQUEST_REGEX =
+  /^(help|commands?|menu|what can you do|how (?:do i use this|does (?:this|it) work)|show (?:me )?(?:the )?(?:commands?|help|menu))[\s!.?]*$/i;
+
+function isHelpMenuRequest(message) {
+  return HELP_MENU_REQUEST_REGEX.test(String(message || '').trim());
+}
 
 function extractAgeQueryFromMessage(message) {
   const match = String(message || '').match(
@@ -281,11 +289,10 @@ async function handleIncomingMessage(req, res) {
     // Log incoming message to DB for admin metrics
     await saveReceivedMessage(wamid, phone, message);
 
-    const lowerMessage = message.toLowerCase();
-    // Only a bare "help" (with optional punctuation) is the help command;
-    // messages that merely contain the word ("help me save Papa 29 Aug")
-    // must flow through normal parsing.
-    const isHelpCommand = /^help[\s!.?]*$/.test(lowerMessage.trim());
+    // Only an explicit menu request ("help", "what can you do") is the help
+    // command. Capability questions ("can you include age in reminders?")
+    // and "help me save Papa 29 Aug" must flow through normal parsing.
+    const isHelpCommand = isHelpMenuRequest(message);
 
     console.log('📞 FROM:', phone);
     console.log('💬 MESSAGE:', message);
@@ -855,6 +862,11 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction, history 
         return 'handled';
 
       case 'help':
+        // The parser often tags "can you…?" capability questions as help.
+        // Only the command menu belongs here; everything else is conversation.
+        if (!isHelpMenuRequest(message)) {
+          return 'fallthrough';
+        }
         await sendHelpMessage(phone);
         return 'handled';
 

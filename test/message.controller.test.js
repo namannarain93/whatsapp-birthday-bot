@@ -13,7 +13,7 @@ function inject(modulePath, exports) {
 
 // Loads the real controller (and its real service dependencies) against
 // mocked db.js / whatsapp.service / llm.js modules.
-function createHarness() {
+function createHarness(overrides = {}) {
   const sent = [];
   const savedBirthdays = [];
   const intents = [];
@@ -21,7 +21,7 @@ function createHarness() {
 
   const explicitDb = {
     onboardUser: async () => false, // user already exists
-    getOnboardingState: async () => ({
+    getOnboardingState: async () => overrides.onboardingState || ({
       onboarding_step: 2,
       onboarding_last_sent_at: new Date(),
       onboarding_nudge_count: 0,
@@ -52,8 +52,8 @@ function createHarness() {
     safeRewrite: async message => message
   });
   inject('../llm.js', {
-    parseIntentWithLLM: async () => ({ intent: 'unknown' }),
-    generateScopedBirthdayBotReply: async () => 'fallback',
+    parseIntentWithLLM: overrides.parseIntentWithLLM || (async () => ({ intent: 'unknown' })),
+    generateScopedBirthdayBotReply: overrides.generateScopedBirthdayBotReply || (async () => 'fallback'),
     searchNameWithLLM: async () => null
   });
 
@@ -114,4 +114,40 @@ test('a bare "help" mid-onboarding still shows the help menu', async () => {
   assert.match(sent[0], /4 simple commands/);
   assert.equal(savedBirthdays.length, 0);
   assert.equal(calls.completeOnboarding, 0);
+});
+
+test('a capability question does not dump the help menu even if the parser says help', async () => {
+  const { sent, webhook } = createHarness({
+    onboardingState: {
+      onboarding_step: 0,
+      onboarding_last_sent_at: null,
+      onboarding_nudge_count: 0,
+      onboarding_parse_failures: 0
+    },
+    parseIntentWithLLM: async () => ({ intent: 'help' }),
+    generateScopedBirthdayBotReply: async () =>
+      'Yes — if a birth year is saved, the reminder includes the age they are turning.'
+  });
+
+  await webhook('Can you tell me age also when reminding of upcoming birthday');
+
+  assert.equal(sent.length, 1);
+  assert.doesNotMatch(sent[0], /4 simple commands/);
+  assert.match(sent[0], /birth year is saved/);
+});
+
+test('"what can you do" still shows the command menu', async () => {
+  const { sent, webhook } = createHarness({
+    onboardingState: {
+      onboarding_step: 0,
+      onboarding_last_sent_at: null,
+      onboarding_nudge_count: 0,
+      onboarding_parse_failures: 0
+    },
+    parseIntentWithLLM: async () => ({ intent: 'help' })
+  });
+
+  await webhook('what can you do');
+
+  assert.match(sent[0], /4 simple commands/);
 });

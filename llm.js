@@ -1,4 +1,5 @@
 const OpenAI = require("openai");
+const { normalizeRelationship } = require('./src/parsers/date.parser');
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -17,8 +18,14 @@ Core behavior:
 - Then immediately guide the conversation back to birthdays/anniversaries and the bot’s capabilities.
 
 Scope:
-- You ONLY help with: adding/updating/removing birthdays or anniversaries, listing upcoming events, setting reminder times, formatting greetings, confirming details (name/date/event type), and onboarding instructions for those features.
+- You ONLY help with implemented features: adding/updating/renaming/removing birthdays or anniversaries, listing or searching saved events, confirming saved details, and onboarding instructions for those features.
 - If the user asks something out of scope, acknowledge it briefly, then redirect to birthdays/anniversaries with a concrete question or action.
+
+What the bot can and cannot store (be accurate, never overpromise):
+- Each entry stores: name, day, month, and OPTIONALLY the birth/wedding year and the relationship (e.g. "wife", "Mom").
+- If the user includes a year (e.g. "Shreyas 22 Aug 1995"), reminders will mention the age ("turns 31"). If no year was given, the bot CANNOT know or calculate ages — say so plainly and invite them to resend the entry with the year.
+- Reminder delivery time is fixed by the service and users cannot configure it.
+- The bot does NOT make calls, send gifts, message the birthday person, compose greetings, or integrate with contacts/calendars. Never claim these.
 
 Style:
 - Keep replies concise (1–4 short sentences).
@@ -129,6 +136,8 @@ const EMPTY_PARSE_RESULT = () => {
     new_name: null,
     day: null,
     month: null,
+    year: null,
+    relationship: null,
     query: null,
     needs_clarification: false,
     clarification_question: null
@@ -151,7 +160,18 @@ const MONTH_NORMALIZATION_MAP = {
   'dec': 'Dec', 'december': 'Dec'
 };
 
-function normalizeLLMAction(parsed) {
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeLLMAction(parsed, sourceMessage = '') {
+  const source = String(sourceMessage);
+  const parsedRelationship = typeof parsed.relationship === 'string'
+    ? normalizeRelationship(parsed.relationship)
+    : null;
+  const relationshipWasExplicit = parsedRelationship
+    ? new RegExp(`\\b${escapeRegex(parsedRelationship)}\\b`, 'i').test(source)
+    : false;
   const action = {
     intent: parsed.intent || 'unknown',
     event_type: parsed.event_type || 'birthday',
@@ -159,12 +179,21 @@ function normalizeLLMAction(parsed) {
     new_name: parsed.new_name || null,
     day: parsed.day !== undefined && parsed.day !== null ? parseInt(parsed.day, 10) : null,
     month: parsed.month || null,
+    year: parsed.year !== undefined && parsed.year !== null ? parseInt(parsed.year, 10) : null,
+    relationship: relationshipWasExplicit ? parsedRelationship : null,
     query: parsed.query || null,
     needs_clarification: parsed.needs_clarification === true,
     clarification_question: parsed.clarification_question || null
   };
   if (action.month) {
     action.month = MONTH_NORMALIZATION_MAP[action.month.toLowerCase()] || action.month;
+  }
+  // Discard implausible years rather than storing garbage
+  if (action.year !== null && (isNaN(action.year) || action.year < 1900 || action.year > new Date().getFullYear())) {
+    action.year = null;
+  }
+  if (action.year !== null && !new RegExp(`\\b${action.year}\\b`).test(source)) {
+    action.year = null;
   }
   return action;
 }
@@ -251,7 +280,7 @@ Ask a clarification ONLY when acting without it could store, change, or delete t
 NEVER ask about things you can resolve yourself. Silently handle:
 - typos, spelling, casing, punctuation, emojis, extra polite words ("pls", "thanks", "can you")
 - any word order, slang, or mixed phrasing — just extract name + date
-- a year in the date ("Kamal 5 Aug 1990") — ignore the year, keep day and month
+- a year in the date ("Kamal 5 Aug 1990") — put it in the "year" field, keep day and month; NEVER include the year in the name
 - numeric dates like "5/8", "05-08", "5.8" — read as day/month (Indian convention): day 5, month Aug
 - ordinal words ("fifth of august") and formats like "aug 5th"
 Ask at most ONE short question. Never stack questions.
@@ -291,6 +320,18 @@ Supported intents:
 3. If the user asks about their OWN birthday using self-referential words ("what is my birthday?", "when is my bday?", "do you have my birthday?"), set intent = "search", query = null, needs_clarification = true, and clarification_question = "What name is your birthday saved under?"
 4. If the message is ONLY a person's name with no date and no other words (e.g. "papa"), set intent = "search", query = that name, needs_clarification = false. The system looks it up and offers to save it if nothing is found — do NOT ask a clarification.
 
+### YEAR RULES:
+1. If the message includes a 4-digit birth/wedding year ("Shreyas 22 Aug 1995", "Kamal 5 Aug 1990"), extract it into the "year" field.
+2. The year is OPTIONAL — never ask for it. If absent, set year = null.
+3. The year must NEVER appear inside the "name" field.
+4. Only treat a 4-digit number as a year when it is plausible (1900 to the current year). Otherwise leave year = null.
+
+### RELATIONSHIP RULES:
+1. If the user states their relationship to the person ("Krithika wife 27 Dec", "Malathi Amma / Mom 1967 - May 27", "my sister Brindha 19 June"), extract it into the "relationship" field (e.g. "wife", "Mom", "sister") and keep ONLY the person's name in "name".
+2. The relationship is OPTIONAL — never ask for it. If absent, set relationship = null.
+3. BE CAREFUL with honorifics that are part of how the person is addressed: in "Malathi Amma" or "Mohan Appa", the words "Amma"/"Appa" belong to the NAME, not the relationship, unless the user clearly separates them (e.g. with a slash: "Malathi Amma / Mom"). When unsure, keep the full string as the name and set relationship = null.
+4. Standalone relationship words used AS the name ("Mom Dec 14", "Papa 29 Aug") are the NAME, not a relationship — save name = "Mom" / "Papa" with relationship = null.
+
 ### SET_NAME RULES:
 1. If the user tells you their name (e.g., "My name is Anik", "I'm Anik", "Call me Anik"), set intent = "set_name" and extract the name.
 2. Set the "name" field to the user's name (e.g., "Anik").
@@ -305,6 +346,8 @@ OUTPUT FORMAT (always return this exact structure):
       "new_name": "string or null (only for rename intent)",
       "day": number or null,
       "month": "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec or null",
+      "year": number or null (4-digit birth/wedding year if the user gave one),
+      "relationship": "string or null (e.g. wife, Mom, sister — only when the user stated it)",
       "query": "string or null (for search intent)",
       "needs_clarification": boolean,
       "clarification_question": "string or null"
@@ -349,7 +392,11 @@ EXAMPLES (in the shorthand below, "→ {...}" means respond with {"actions":[{..
 
 MESSY INPUT EXAMPLES (interpret confidently, no clarification needed):
 "KAMAL BDAY 5 AUG!!!" → {"intent":"save","event_type":"birthday","name":"Kamal","day":5,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}
-"Kamal 5 Aug 1990" → {"intent":"save","event_type":"birthday","name":"Kamal","day":5,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}
+"Kamal 5 Aug 1990" → {"intent":"save","event_type":"birthday","name":"Kamal","day":5,"month":"Aug","year":1990,"relationship":null,"query":null,"needs_clarification":false,"clarification_question":null}
+"Krithika wife 27 Dec" → {"intent":"save","event_type":"birthday","name":"Krithika","day":27,"month":"Dec","year":null,"relationship":"wife","query":null,"needs_clarification":false,"clarification_question":null}
+"Malathi Amma / Mom 1967 - May 27" → {"intent":"save","event_type":"birthday","name":"Malathi Amma","day":27,"month":"May","year":1967,"relationship":"Mom","query":null,"needs_clarification":false,"clarification_question":null}
+"my sister Brindha 1989 - June 19" → {"intent":"save","event_type":"birthday","name":"Brindha","day":19,"month":"Jun","year":1989,"relationship":"sister","query":null,"needs_clarification":false,"clarification_question":null}
+"Mohan Appa October 7" → {"intent":"save","event_type":"birthday","name":"Mohan Appa","day":7,"month":"Oct","year":null,"relationship":null,"query":null,"needs_clarification":false,"clarification_question":null}
 "Priya 12/4" → {"intent":"save","event_type":"birthday","name":"Priya","day":12,"month":"Apr","query":null,"needs_clarification":false,"clarification_question":null}
 "pls can u save neha ka bday 5th april thanks" → {"intent":"save","event_type":"birthday","name":"Neha","day":5,"month":"Apr","query":null,"needs_clarification":false,"clarification_question":null}
 "fifth of august is rakesh birthday 🎂" → {"intent":"save","event_type":"birthday","name":"Rakesh","day":5,"month":"Aug","query":null,"needs_clarification":false,"clarification_question":null}
@@ -406,7 +453,9 @@ MULTI-ACTION EXAMPLE (no context needed):
     const rawActions = Array.isArray(parsed.actions) && parsed.actions.length > 0
       ? parsed.actions
       : [parsed];
-    const actions = rawActions.slice(0, 8).map(normalizeLLMAction);
+    const actions = rawActions
+      .slice(0, 8)
+      .map(action => normalizeLLMAction(action, message));
 
     const result = { ...actions[0], actions };
     console.log('🤖 LLM parsed intent:', JSON.stringify(actions));
@@ -533,4 +582,11 @@ Rules:
   return response.choices[0].message.content.trim();
 }
 
-module.exports = { rewriteForElderlyUser, generateScopedBirthdayBotReply, parseIntentWithLLM, searchNameWithLLM, generateDailyMetricsSummary };
+module.exports = {
+  rewriteForElderlyUser,
+  generateScopedBirthdayBotReply,
+  parseIntentWithLLM,
+  searchNameWithLLM,
+  generateDailyMetricsSummary,
+  normalizeLLMAction
+};

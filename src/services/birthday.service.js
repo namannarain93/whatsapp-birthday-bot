@@ -11,6 +11,7 @@ const {
   getUpcomingBirthdays,
   deleteBirthday,
   updateBirthday,
+  updateBirthdayDetails,
   updateBirthdayName,
   markWelcomeSeen
 } = require('../../db.js');
@@ -20,28 +21,45 @@ const { extractNamesFromDeleteInput } = require('../parsers/date.parser');
 const { safeRewrite, sendWhatsAppMessage } = require('./whatsapp.service');
 const { searchNameWithLLM } = require('../../llm.js');
 
-// Save a birthday for a user
-async function saveBirthdayForUser(phone, name, day, month, type = 'birthday') {
+// Save a birthday for a user. extras: { year, relationship } (both optional).
+async function saveBirthdayForUser(phone, name, day, month, type = 'birthday', extras = {}) {
   const normalizedMonth = normalizeMonthToShort(month);
   if (!normalizedMonth) {
     return { success: false, error: 'Invalid month' };
   }
 
+  const year = extras.year || null;
+  const relationship = extras.relationship || null;
+
   const exists = await birthdayExists(phone, name.trim(), day, normalizedMonth, type);
   if (exists) {
     const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
-    const reply = await safeRewrite(
-      `I already have ${name}'s ${eventName} saved on ${normalizedMonth} ${day}.`
-    );
+    // The re-save may carry details the original entry lacked (year/relationship)
+    // — backfill them instead of discarding.
+    let replyText = `I already have ${name}'s ${eventName} saved on ${normalizedMonth} ${day}.`;
+    if (year || relationship) {
+      await updateBirthdayDetails(
+        phone,
+        name.trim(),
+        day,
+        normalizedMonth,
+        type,
+        { year, relationship }
+      );
+      replyText += ` I've noted the extra details you shared.`;
+    }
+    const reply = await safeRewrite(replyText);
     await sendWhatsAppMessage(phone, reply);
     return { success: false, duplicate: true };
   }
 
-  await saveBirthday(phone, name.trim(), day, normalizedMonth, type);
+  await saveBirthday(phone, name.trim(), day, normalizedMonth, type, year, relationship);
   await markWelcomeSeen(phone);
   const emoji = type === 'anniversary' ? '💍' : '🎂';
   const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
-  const reply = await safeRewrite(`I've saved ${name}'s ${eventName} on ${normalizedMonth} ${day}. ${emoji}`);
+  const relPart = relationship ? ` (${relationship})` : '';
+  const yearPart = year ? `, ${year}` : '';
+  const reply = await safeRewrite(`I've saved ${name}${relPart}'s ${eventName} on ${normalizedMonth} ${day}${yearPart}. ${emoji}`);
   await sendWhatsAppMessage(phone, reply);
   return { success: true };
 }
@@ -53,8 +71,8 @@ async function saveBirthdayFromMessage(phone, message) {
     return { success: false };
   }
 
-  const { name, day, month } = parsedSave;
-  return await saveBirthdayForUser(phone, name, day, month);
+  const { name, day, month, year, relationship } = parsedSave;
+  return await saveBirthdayForUser(phone, name, day, month, 'birthday', { year, relationship });
 }
 
 // Save birthday from legacy regex pattern
@@ -121,13 +139,16 @@ async function deleteBirthdayForUser(phone, inputName, type = null) {
 
 // Update birthday for a user. If nobody by that name exists yet, fall back to
 // saving — never claim an update happened when no row was touched.
-async function updateBirthdayForUser(phone, name, day, month, type = 'birthday') {
+async function updateBirthdayForUser(phone, name, day, month, type = 'birthday', extras = {}) {
   const normalizedMonth = normalizeMonthToShort(month);
   if (!normalizedMonth) {
     return { success: false };
   }
 
-  const updated = await updateBirthday(phone, name, day, normalizedMonth, type);
+  const year = extras.year || null;
+  const relationship = extras.relationship || null;
+
+  const updated = await updateBirthday(phone, name, day, normalizedMonth, type, year, relationship);
   if (updated) {
     const eventName = type === 'anniversary' ? 'anniversary' : 'birthday';
     const reply = await safeRewrite(`I've updated ${name}'s ${eventName} to ${normalizedMonth} ${day}.`);
@@ -135,7 +156,7 @@ async function updateBirthdayForUser(phone, name, day, month, type = 'birthday')
     return { success: true };
   }
 
-  return await saveBirthdayForUser(phone, name, day, normalizedMonth, type);
+  return await saveBirthdayForUser(phone, name, day, normalizedMonth, type, { year, relationship });
 }
 
 // Rename person for a user
@@ -276,17 +297,26 @@ async function fuzzySearchBirthdayByName(phone, query) {
     return { found: false };
   }
 
-  // Use LLM to find genuine matches from the name list
-  const nameList = allBirthdays.map(b => b.name);
-  const matchedNames = await searchNameWithLLM(query, nameList);
+  // A relationship match ("when is mom's birthday?" with relationship "Mom")
+  // is exact and cheap — check it before involving the LLM.
+  const queryLower = query.trim().toLowerCase();
+  let matches = allBirthdays.filter(
+    b => b.relationship && b.relationship.toLowerCase() === queryLower
+  );
 
-  if (matchedNames.length === 0) {
-    return { found: false };
+  if (matches.length === 0) {
+    // Use LLM to find genuine matches from the name list
+    const nameList = allBirthdays.map(b => b.name);
+    const matchedNames = await searchNameWithLLM(query, nameList);
+
+    if (matchedNames.length === 0) {
+      return { found: false };
+    }
+
+    // Map matched names back to full birthday objects
+    const matchedNamesLower = new Set(matchedNames.map(n => n.toLowerCase()));
+    matches = allBirthdays.filter(b => matchedNamesLower.has(b.name.toLowerCase()));
   }
-
-  // Map matched names back to full birthday objects
-  const matchedNamesLower = new Set(matchedNames.map(n => n.toLowerCase()));
-  const matches = allBirthdays.filter(b => matchedNamesLower.has(b.name.toLowerCase()));
 
   if (matches.length === 0) {
     return { found: false };
@@ -297,14 +327,17 @@ async function fuzzySearchBirthdayByName(phone, query) {
     const b = matches[0];
     const eventName = b.type === 'anniversary' ? 'anniversary' : 'birthday';
     const emoji = b.type === 'anniversary' ? '💍' : '🎂';
-    const reply = await safeRewrite(`${b.name}'s ${eventName} is on ${b.month} ${b.day}. ${emoji}`);
+    const rel = b.relationship ? ` (${b.relationship})` : '';
+    const born = b.year ? `, ${b.year}` : '';
+    const reply = await safeRewrite(`${b.name}${rel}'s ${eventName} is on ${b.month} ${b.day}${born}. ${emoji}`);
     await sendWhatsAppMessage(phone, reply);
     return { found: true, count: 1 };
   } else {
     // Multiple matches - return list
     const list = matches.map(b => {
       const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
-      return `• ${b.name} – ${b.month} ${b.day}${typeLabel}`;
+      const rel = b.relationship ? ` (${b.relationship})` : '';
+      return `• ${b.name}${rel} – ${b.month} ${b.day}${typeLabel}`;
     }).join('\n');
     const reply = await safeRewrite(`I found these matches:\n\n${list}`);
     await sendWhatsAppMessage(phone, reply);

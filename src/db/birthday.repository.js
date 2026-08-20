@@ -1,11 +1,11 @@
 const { pool } = require('./pool');
 
-// Save birthday
-async function saveBirthday(phone, name, day, month, type = 'birthday') {
+// Save birthday. year (birth/wedding year) and relationship are optional.
+async function saveBirthday(phone, name, day, month, type = 'birthday', year = null, relationship = null) {
   await pool.query(
-    `INSERT INTO birthdays (phone, name, day, month, type)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [phone, name, day, month, type]
+    `INSERT INTO birthdays (phone, name, day, month, type, year, relationship)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [phone, name, day, month, type, year, relationship]
   );
 }
 
@@ -29,7 +29,7 @@ async function birthdayExists(phone, name, day, month, type = 'birthday') {
 async function getBirthdaysForMonth(phone, month) {
   const res = await pool.query(
     `
-    SELECT name, day, month, type
+    SELECT name, day, month, type, year, relationship
     FROM birthdays
     WHERE phone = $1
       AND (LOWER(month) = LOWER($2) OR LOWER(month) LIKE LOWER($3))
@@ -44,7 +44,7 @@ async function getBirthdaysForMonth(phone, month) {
 async function getAllBirthdays(phone) {
   const res = await pool.query(
     `
-    SELECT name, day, month, type
+    SELECT name, day, month, type, year, relationship
     FROM birthdays
     WHERE phone = $1
     ORDER BY month, day
@@ -58,7 +58,7 @@ async function getAllBirthdays(phone) {
 async function getBirthdaysForDate(phone, day, month) {
   const res = await pool.query(
     `
-    SELECT name, day, month, type
+    SELECT name, day, month, type, year, relationship
     FROM birthdays
     WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
     ORDER BY name
@@ -75,7 +75,7 @@ async function getBirthdaysForDate(phone, day, month) {
 async function getBirthdaysForReminder(phone, day, month, timezone, todayDate) {
   const res = await pool.query(
     `
-    SELECT name, day, month, type
+    SELECT name, day, month, type, year, relationship
     FROM birthdays
     WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
       AND (
@@ -89,13 +89,17 @@ async function getBirthdaysForReminder(phone, day, month, timezone, todayDate) {
   return res.rows;
 }
 
-// Get birthday by name (case-insensitive, partial match)
+// Get birthday by name or relationship (case-insensitive, partial match)
 async function getBirthdayByName(phone, name) {
   const res = await pool.query(
     `
-    SELECT name, day, month, type
+    SELECT name, day, month, type, year, relationship
     FROM birthdays
-    WHERE phone = $1 AND LOWER(name) LIKE LOWER('%' || $2 || '%')
+    WHERE phone = $1
+      AND (
+        LOWER(name) LIKE LOWER('%' || $2 || '%')
+        OR LOWER(relationship) LIKE LOWER('%' || $2 || '%')
+      )
     ORDER BY name
     LIMIT 10
     `,
@@ -108,7 +112,7 @@ async function getBirthdayByName(phone, name) {
 async function getBirthdaysByDate(phone, day, month) {
   const res = await pool.query(
     `
-    SELECT name, day, month, type
+    SELECT name, day, month, type, year, relationship
     FROM birthdays
     WHERE phone = $1 AND day = $2 AND LOWER(month) = LOWER($3)
     ORDER BY name
@@ -132,7 +136,7 @@ async function getUpcomingBirthdays(phone, fromDay, fromMonth, toDay, toMonth) {
   // Get all birthdays for this user
   const allBirthdays = await pool.query(
     `
-    SELECT name, day, month, type
+    SELECT name, day, month, type, year, relationship
     FROM birthdays
     WHERE phone = $1
     ORDER BY month, day
@@ -244,14 +248,41 @@ async function birthdayExistsByName(phone, name, type = null) {
 }
 
 // Update birthday. Returns true when an existing row was actually updated.
-async function updateBirthday(phone, name, day, month, type = 'birthday') {
+// year/relationship only overwrite existing values when provided (COALESCE).
+async function updateBirthday(phone, name, day, month, type = 'birthday', year = null, relationship = null) {
   const res = await pool.query(
     `
     UPDATE birthdays
-    SET day = $3, month = $4, type = $5
+    SET day = $3, month = $4, type = $5,
+        year = COALESCE($6, year),
+        relationship = COALESCE($7, relationship)
     WHERE phone = $1 AND LOWER(name) = LOWER($2)
     `,
-    [phone, name, day, month, type]
+    [phone, name, day, month, type, year, relationship]
+  );
+  return res.rowCount > 0;
+}
+
+// Backfill year/relationship on an existing entry without touching the date.
+// Used when the user re-saves a duplicate but this time provides more details.
+async function updateBirthdayDetails(
+  phone,
+  name,
+  day,
+  month,
+  type = 'birthday',
+  { year = null, relationship = null } = {}
+) {
+  if (year == null && relationship == null) return false;
+  const res = await pool.query(
+    `
+    UPDATE birthdays
+    SET year = COALESCE($6, year),
+        relationship = COALESCE($7, relationship)
+    WHERE phone = $1 AND LOWER(name) = LOWER($2)
+      AND day = $3 AND LOWER(month) = LOWER($4) AND type = $5
+    `,
+    [phone, name, day, month, type, year, relationship]
   );
   return res.rowCount > 0;
 }
@@ -283,5 +314,6 @@ module.exports = {
   deleteBirthday,
   birthdayExistsByName,
   updateBirthday,
+  updateBirthdayDetails,
   updateBirthdayName,
 };

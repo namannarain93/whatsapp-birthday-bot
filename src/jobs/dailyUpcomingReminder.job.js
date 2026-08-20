@@ -8,6 +8,7 @@ const {
 } = require('../../db.js');
 const { sendTemplateMessage } = require('../services/whatsapp.service');
 const { isSundayReminderActive } = require('../db/user.repository');
+const { formatAgeSuffix } = require('../utils/age.utils');
 
 // Centralized WhatsApp template configuration
 // Body: "You have upcoming special events next week!\n\n{{1}}\n\nThese events are in your saved reminders."
@@ -26,7 +27,9 @@ function formatBirthdayList(birthdays) {
 
   return birthdays.map(b => {
     const label = b.type === 'anniversary' ? 'anniversary' : 'birthday';
-    return `${b.name}'s ${label} — ${b.day} ${b.month}`;
+    const rel = b.relationship ? ` (${b.relationship})` : '';
+    const age = b.date ? formatAgeSuffix(b.type, b.year, b.date.year()) : '';
+    return `${b.name}${rel}'s ${label} — ${b.day} ${b.month}${age}`;
   }).join(', ');
 }
 

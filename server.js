@@ -296,7 +296,9 @@ app.get('/admin', async (req, res) => {
         <td>${i + 1}</td>
         <td>${row.phone}</td>
         <td>${row.name}</td>
+        <td>${row.relationship || '—'}</td>
         <td>${row.day} ${row.month}</td>
+        <td>${row.year || '—'}</td>
         <td>${row.type}</td>
         <td>${row.createdAt}</td>
       </tr>
@@ -996,13 +998,15 @@ app.get('/admin', async (req, res) => {
                                       <th>#</th>
                                       <th>Phone Number</th>
                                       <th>Name</th>
+                                      <th>Relationship</th>
                                       <th>Date</th>
+                                      <th>Year</th>
                                       <th>Type</th>
                                       <th>Added On (IST)</th>
                                   </tr>
                               </thead>
                               <tbody>
-                                  ${allEventRows || '<tr><td colspan="6">No entries found.</td></tr>'}
+                                  ${allEventRows || '<tr><td colspan="8">No entries found.</td></tr>'}
                               </tbody>
                           </table>
                       </div>
@@ -1477,8 +1481,10 @@ app.get('/admin/export/events.xlsx', async (req, res) => {
       '#': i + 1,
       'Phone Number': e.phone,
       'Name': e.name,
+      'Relationship': e.relationship || '',
       'Day': e.day,
       'Month': e.month,
+      'Year': e.year || '',
       'Type': e.type,
       'Added On (IST)': e.createdAt
     }));

@@ -103,7 +103,10 @@ async function resumePendingAction(phone, message, pending) {
           // The user's reply is the name; we already have the date
           const name = extractNameFromReply(trimmedMessage);
           if (!name) return false;
-          const result = await saveBirthdayForUser(phone, name, pending.day, pending.month, event_type);
+          const result = await saveBirthdayForUser(phone, name, pending.day, pending.month, event_type, {
+            year: pending.year || null,
+            relationship: pending.relationship || null
+          });
           if (result.success || result.duplicate) {
             await markWelcomeSeen(phone);
           }
@@ -113,7 +116,10 @@ async function resumePendingAction(phone, message, pending) {
           // The user's reply should contain a date; parse it
           const parsed = await parseIntentWithLLM(trimmedMessage);
           if (parsed.day && parsed.month) {
-            const result = await saveBirthdayForUser(phone, pending.name, parsed.day, parsed.month, event_type);
+            const result = await saveBirthdayForUser(phone, pending.name, parsed.day, parsed.month, event_type, {
+              year: parsed.year || pending.year || null,
+              relationship: parsed.relationship || pending.relationship || null
+            });
             if (result.success || result.duplicate) {
               await markWelcomeSeen(phone);
             }
@@ -133,13 +139,19 @@ async function resumePendingAction(phone, message, pending) {
         if (missing_field === 'name') {
           const name = extractNameFromReply(trimmedMessage);
           if (!name) return false;
-          const result = await updateBirthdayForUser(phone, name, pending.day, pending.month, event_type);
+          const result = await updateBirthdayForUser(phone, name, pending.day, pending.month, event_type, {
+            year: pending.year || null,
+            relationship: pending.relationship || null
+          });
           return result.success;
         }
         if (missing_field === 'date') {
           const parsed = await parseIntentWithLLM(trimmedMessage);
           if (parsed.day && parsed.month) {
-            const result = await updateBirthdayForUser(phone, pending.name, parsed.day, parsed.month, event_type);
+            const result = await updateBirthdayForUser(phone, pending.name, parsed.day, parsed.month, event_type, {
+              year: parsed.year || pending.year || null,
+              relationship: parsed.relationship || pending.relationship || null
+            });
             return result.success;
           }
           return false;
@@ -437,6 +449,8 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
           parsed.name = cleanedName;
           if (!parsed.day) parsed.day = recovered.day;
           if (!parsed.month) parsed.month = recovered.month;
+          if (!parsed.year) parsed.year = recovered.year || null;
+          if (!parsed.relationship) parsed.relationship = recovered.relationship || null;
           parsed.needs_clarification = false;
           parsed.clarification_question = null;
         }
@@ -452,6 +466,8 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
         name: parsed.name || null,
         day: parsed.day || null,
         month: parsed.month || null,
+        year: parsed.year || null,
+        relationship: parsed.relationship || null,
         query: parsed.query || null,
         missing_field: !parsed.name && !parsed.query ? 'name_or_query' :
                        !parsed.name ? 'name' :
@@ -488,6 +504,8 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
             name: parsed.name || null,
             day: parsed.day || null,
             month: parsed.month || null,
+            year: parsed.year || null,
+            relationship: parsed.relationship || null,
             missing_field: missingField,
             created_at: new Date().toISOString()
           });
@@ -505,6 +523,8 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
             name: parsed.name,
             day: null,
             month: null,
+            year: parsed.year || null,
+            relationship: parsed.relationship || null,
             missing_field: 'date',
             created_at: new Date().toISOString()
           });
@@ -514,7 +534,10 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
         }
 
         // Use LLM-extracted values
-        const saveResult = await saveBirthdayForUser(phone, parsed.name, parsed.day, parsed.month, parsed.event_type);
+        const saveResult = await saveBirthdayForUser(phone, parsed.name, parsed.day, parsed.month, parsed.event_type, {
+          year: parsed.year || null,
+          relationship: parsed.relationship || null
+        });
         if (saveResult.success || saveResult.duplicate) {
           await markWelcomeSeen(phone);
           return 'handled';
@@ -544,6 +567,8 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
             name: parsed.name || null,
             day: parsed.day || null,
             month: parsed.month || null,
+            year: parsed.year || null,
+            relationship: parsed.relationship || null,
             missing_field: updateMissingField,
             created_at: new Date().toISOString()
           });
@@ -561,6 +586,8 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
             name: parsed.name,
             day: null,
             month: null,
+            year: parsed.year || null,
+            relationship: parsed.relationship || null,
             missing_field: 'date',
             created_at: new Date().toISOString()
           });
@@ -569,7 +596,10 @@ async function handleParsedAction(phone, message, parsed, isOnlyAction) {
           return 'clarify';
         }
 
-        const updateResult = await updateBirthdayForUser(phone, parsed.name, parsed.day, parsed.month, parsed.event_type);
+        const updateResult = await updateBirthdayForUser(phone, parsed.name, parsed.day, parsed.month, parsed.event_type, {
+          year: parsed.year || null,
+          relationship: parsed.relationship || null
+        });
         if (updateResult.success) {
           return 'handled';
         }

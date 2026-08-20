@@ -8,6 +8,7 @@ const {
   onboardUser,
   saveBirthday,
   birthdayExists,
+  updateBirthdayDetails,
   setUserName,
   getOnboardingState,
   setOnboardingStep,
@@ -284,8 +285,10 @@ async function advanceStep(phone, step, saved) {
 
 function formatEntry(entry) {
   const suffix = entry.type === 'anniversary' ? ' (anniversary)' : '';
+  const relationship = entry.relationship ? ` (${entry.relationship})` : '';
+  const year = entry.year ? `, ${entry.year}` : '';
   const duplicateNote = entry.isNew === false ? ' — already saved 👍' : '';
-  return `${entry.name} — ${entry.day} ${entry.month}${suffix}${duplicateNote}`;
+  return `${entry.name}${relationship} — ${entry.day} ${entry.month}${year}${suffix}${duplicateNote}`;
 }
 
 function formatEntryLines(entries) {
@@ -313,12 +316,23 @@ function extractNameReply(message) {
 // Save an entry unless an identical one already exists.
 // isNew tells the caller whether a row was actually inserted, so duplicates
 // can be labeled in the confirmation instead of silently skipped.
-async function saveEntryIfNew(phone, name, day, month, type) {
+async function saveEntryIfNew(phone, name, day, month, type, extras = {}) {
+  const year = extras.year || null;
+  const relationship = extras.relationship || null;
   const exists = await birthdayExists(phone, name, day, month, type);
   if (!exists) {
-    await saveBirthday(phone, name, day, month, type);
+    await saveBirthday(phone, name, day, month, type, year, relationship);
+  } else if (year || relationship) {
+    await updateBirthdayDetails(
+      phone,
+      name,
+      day,
+      month,
+      type,
+      { year, relationship }
+    );
   }
-  return { name, day, month, type, isNew: !exists };
+  return { name, day, month, type, year, relationship, isNew: !exists };
 }
 
 // Parse birthday entries from the message and save them.
@@ -365,7 +379,7 @@ async function parseSingleEntry(phone, line) {
   const parsed = parseNameAndDate(line);
   if (!parsed) return null;
 
-  const { name, day, month } = parsed;
+  const { name, day, month, year, relationship } = parsed;
   const normalizedMonth = normalizeMonthToShort(month);
   if (!normalizedMonth) return null;
 
@@ -377,7 +391,7 @@ async function parseSingleEntry(phone, line) {
   const cleanName = cleanEventName(name);
   if (!cleanName) return null;
 
-  return saveEntryIfNew(phone, cleanName, day, normalizedMonth, type);
+  return saveEntryIfNew(phone, cleanName, day, normalizedMonth, type, { year, relationship });
 }
 
 // LLM fallback for when the simple parser can't handle the input
@@ -390,7 +404,10 @@ async function tryLLMParse(phone, message, saveNameAsUser) {
       const cleanName = cleanEventName(parsed.name);
       if (!cleanName) return null;
 
-      const entry = await saveEntryIfNew(phone, cleanName, parsed.day, normalizedMonth, type);
+      const entry = await saveEntryIfNew(phone, cleanName, parsed.day, normalizedMonth, type, {
+        year: parsed.year || null,
+        relationship: parsed.relationship || null
+      });
 
       if (saveNameAsUser) {
         await setUserName(phone, cleanName);

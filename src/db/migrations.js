@@ -99,6 +99,19 @@ const dbReady = (async () => {
       ALTER TABLE birthdays 
       ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'birthday';
     `);
+
+    // Birth/wedding year (optional — enables age in reminders)
+    await pool.query(`
+      ALTER TABLE birthdays
+      ADD COLUMN IF NOT EXISTS year INTEGER;
+    `);
+
+    // Relationship to the user (optional, e.g. "Mom", "wife")
+    await pool.query(`
+      ALTER TABLE birthdays
+      ADD COLUMN IF NOT EXISTS relationship TEXT;
+    `);
+    console.log('✅ Birthday year and relationship columns ensured');
     
     // Create birthday_reminder_log table for tracking sent reminders
     await pool.query(`

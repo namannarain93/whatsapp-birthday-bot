@@ -64,6 +64,8 @@ async function getBirthdaysInDateRange(phone, startDay, endDay) {
           day: b.day,
           month: b.month,
           type: b.type,
+          year: b.year || null,
+          relationship: b.relationship || null,
           date: cursor.clone()
         });
       }
@@ -158,6 +160,8 @@ async function getNextNUpcomingBirthdays(phone, n = 5, startAfterDays = 7) {
           day: b.day,
           month: b.month,
           type: b.type,
+          year: b.year || null,
+          relationship: b.relationship || null,
           date: checkDate.clone()
         });
       }

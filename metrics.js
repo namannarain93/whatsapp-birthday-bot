@@ -580,7 +580,7 @@ async function getSundayReminderStats() {
 async function getAllEventsTable() {
   try {
     const result = await pool.query(
-      `SELECT phone, name, day, month, type, created_at
+      `SELECT phone, name, day, month, type, year, relationship, created_at
        FROM birthdays
        ORDER BY created_at DESC`
     );
@@ -591,6 +591,8 @@ async function getAllEventsTable() {
       day: row.day,
       month: row.month,
       type: row.type || 'birthday',
+      year: row.year || null,
+      relationship: row.relationship || null,
       createdAt: row.created_at
         ? new Date(row.created_at).toLocaleString('en-IN', {
             timeZone: 'Asia/Kolkata',

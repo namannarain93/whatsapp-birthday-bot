@@ -8,6 +8,7 @@ const {
   logReminderSent 
 } = require('../../db.js');
 const { sendTemplateMessage } = require('../services/whatsapp.service');
+const { formatAgeSuffix } = require('../utils/age.utils');
 
 // Main reminder function
 async function sendBirthdayReminders() {
@@ -67,10 +68,12 @@ async function sendBirthdayReminders() {
         
         // Prepare event phrase for the message. The utility template reads
         // "It's *{{1}}* today. ...", so {{1}} is a possessive event phrase
-        // (e.g. "John's birthday", "Sarah's anniversary") rather than a bare name.
+        // (e.g. "John's birthday (turns 31)") rather than a bare name.
         const names = birthdays.map(b => {
           const label = b.type === 'anniversary' ? 'anniversary' : 'birthday';
-          return `${b.name}'s ${label}`;
+          const rel = b.relationship ? ` (${b.relationship})` : '';
+          const age = formatAgeSuffix(b.type, b.year, now.year());
+          return `${b.name}${rel}'s ${label}${age}`;
         });
         const namesString = names.join(', ');
         

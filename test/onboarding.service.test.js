@@ -28,8 +28,8 @@ function createHarness() {
       });
       return true;
     },
-    saveBirthday: async (phone, name, day, month, type) => {
-      birthdays.push({ phone, name, day, month, type });
+    saveBirthday: async (phone, name, day, month, type, year = null, relationship = null) => {
+      birthdays.push({ phone, name, day, month, type, year, relationship });
     },
     birthdayExists: async (phone, name, day, month, type) =>
       birthdays.some(entry =>
@@ -39,6 +39,19 @@ function createHarness() {
         entry.month.toLowerCase() === month.toLowerCase() &&
         entry.type === type
       ),
+    updateBirthdayDetails: async (phone, name, day, month, type, details) => {
+      const entry = birthdays.find(item =>
+        item.phone === phone &&
+        item.name.toLowerCase() === name.toLowerCase() &&
+        item.day === day &&
+        item.month.toLowerCase() === month.toLowerCase() &&
+        item.type === type
+      );
+      if (!entry) return false;
+      if (details.year != null) entry.year = details.year;
+      if (details.relationship != null) entry.relationship = details.relationship;
+      return true;
+    },
     setUserName: async (phone, name) => {
       users.get(phone).name = name;
     },
@@ -112,7 +125,9 @@ test('preserves the first entry and resolves a date-only onboarding reply', asyn
     name: 'Ankit Singh',
     day: 19,
     month: 'Oct',
-    type: 'birthday'
+    type: 'birthday',
+    year: null,
+    relationship: null
   });
 
   replies = await receive(phone, '29 september');
@@ -195,4 +210,40 @@ test('does not save self-reference filler as a name', async () => {
   assert.equal(birthdays.length, 0);
   assert.equal(users.get(phone).step, 1);
   assert.match(replies[0], /still need your name/i);
+});
+
+test('stores recognized relationship and adjacent year separately during onboarding', async () => {
+  const { birthdays, receive } = createHarness();
+  const phone = '977777777777';
+
+  await receive(phone, 'Krithika wife 27 Dec 1990');
+
+  assert.deepEqual(birthdays[0], {
+    phone,
+    name: 'Krithika',
+    day: 27,
+    month: 'Dec',
+    type: 'birthday',
+    year: 1990,
+    relationship: 'wife'
+  });
+});
+
+test('backfills details when an onboarding save matches an existing event', async () => {
+  const { birthdays, receive } = createHarness();
+  const phone = '988888888888';
+  birthdays.push({
+    phone,
+    name: 'Shreyas',
+    day: 22,
+    month: 'Aug',
+    type: 'birthday',
+    year: null,
+    relationship: null
+  });
+
+  await receive(phone, 'Shreyas 1995 - August 22');
+
+  assert.equal(birthdays.length, 1);
+  assert.equal(birthdays[0].year, 1995);
 });

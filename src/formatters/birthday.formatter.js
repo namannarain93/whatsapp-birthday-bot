@@ -17,6 +17,7 @@ function formatBirthdaysChronologically(birthdays) {
     name: b.name,
     day: b.day,
     type: b.type,
+    relationship: b.relationship || null,
     monthCanonical: normalizeMonthToCanonical(b.month)
   }));
 
@@ -50,7 +51,8 @@ function formatBirthdaysChronologically(birthdays) {
     result += `*${label}*\n`;
     grouped[monthKey].forEach(b => {
       const typeLabel = b.type === 'anniversary' ? ' (Anniversary)' : '';
-      result += `• ${b.day} – ${b.name}${typeLabel}\n`;
+      const rel = b.relationship ? ` (${b.relationship})` : '';
+      result += `• ${b.day} – ${b.name}${rel}${typeLabel}\n`;
     });
     result += '\n';
   });

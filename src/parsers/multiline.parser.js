@@ -2,7 +2,7 @@
 
 const { parseNameAndDate } = require('./date.parser');
 const { normalizeMonthToShort } = require('../utils/month.utils');
-const { birthdayExists, saveBirthday } = require('../../db.js');
+const { birthdayExists, saveBirthday, updateBirthdayDetails } = require('../../db.js');
 
 // Process a single line for saving
 async function processSaveLine(phone, line) {
@@ -12,7 +12,7 @@ async function processSaveLine(phone, line) {
   // Try flexible date parsing first
   const parsedSave = parseNameAndDate(trimmed);
   if (parsedSave) {
-    const { name, day, month } = parsedSave;
+    const { name, day, month, year, relationship } = parsedSave;
     // Normalize month to canonical short form (Jan, Feb, etc.) at write time
     const normalizedMonth = normalizeMonthToShort(month);
     if (!normalizedMonth) {
@@ -20,10 +20,27 @@ async function processSaveLine(phone, line) {
     }
     const exists = await birthdayExists(phone, name.trim(), day, normalizedMonth);
     if (exists) {
-      return { success: false, reason: 'duplicate', name, day, month: normalizedMonth };
+      if (year || relationship) {
+        await updateBirthdayDetails(
+          phone,
+          name.trim(),
+          day,
+          normalizedMonth,
+          'birthday',
+          { year: year || null, relationship: relationship || null }
+        );
+      }
+      return {
+        success: false,
+        reason: 'duplicate',
+        name,
+        day,
+        month: normalizedMonth,
+        detailsUpdated: Boolean(year || relationship)
+      };
     }
-    await saveBirthday(phone, name.trim(), day, normalizedMonth);
-    return { success: true, name, day, month: normalizedMonth };
+    await saveBirthday(phone, name.trim(), day, normalizedMonth, 'birthday', year || null, relationship || null);
+    return { success: true, name, day, month: normalizedMonth, year: year || null, relationship: relationship || null };
   }
 
   // Try legacy regex pattern ("Name Month Day")
@@ -87,7 +104,13 @@ async function processMultilineMessage(phone, message) {
     if (result.success) {
       saved.push(result);
     } else if (result.reason === 'duplicate') {
-      skipped.push({ line: result.name, reason: 'duplicate', day: result.day, month: result.month });
+      skipped.push({
+        line: result.name,
+        reason: 'duplicate',
+        day: result.day,
+        month: result.month,
+        detailsUpdated: result.detailsUpdated === true
+      });
     } else {
       skipped.push({ line: result.line || line, reason: 'parse_failed' });
     }
@@ -98,7 +121,9 @@ async function processMultilineMessage(phone, message) {
   if (saved.length > 0) {
     summary += "I've saved:\n";
     saved.forEach(s => {
-      summary += `• ${s.name} – ${s.month} ${s.day}\n`;
+      const rel = s.relationship ? ` (${s.relationship})` : '';
+      const born = s.year ? `, born ${s.year}` : '';
+      summary += `• ${s.name}${rel} – ${s.month} ${s.day}${born}\n`;
     });
     if (saved.length === lines.length) {
       summary += '🎂';
@@ -110,7 +135,8 @@ async function processMultilineMessage(phone, message) {
     summary += "I couldn't understand:\n";
     skipped.forEach(s => {
       if (s.reason === 'duplicate') {
-        summary += `• ${s.line} – already saved on ${s.month} ${s.day}\n`;
+        const detailNote = s.detailsUpdated ? '; extra details updated' : '';
+        summary += `• ${s.line} – already saved on ${s.month} ${s.day}${detailNote}\n`;
       } else {
         summary += `• ${s.line}\n`;
       }

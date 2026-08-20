@@ -7,14 +7,17 @@ const {
   logReminderSent
 } = require('../../db.js');
 const { sendTemplateMessage } = require('../services/whatsapp.service');
+const { formatAgeSuffix } = require('../utils/age.utils');
 
 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// "Naman's birthday on 11 Jul"
-function formatEventDetail(event, day, month) {
+// "Naman's birthday on 11 Jul (turns 31)"
+function formatEventDetail(event, day, month, eventYear) {
   const label = event.type === 'anniversary' ? 'anniversary' : 'birthday';
-  return `${event.name}'s ${label} on ${day} ${month}`;
+  const rel = event.relationship ? ` (${event.relationship})` : '';
+  const age = formatAgeSuffix(event.type, event.year, eventYear);
+  return `${event.name}${rel}'s ${label} on ${day} ${month}${age}`;
 }
 
 // Sends the day-before reminder (event_details_reminder_2) at 9 AM local time,
@@ -62,7 +65,7 @@ async function sendDayBeforeReminders() {
         }
 
         const detailString = events
-          .map(e => formatEventDetail(e, tomorrowDay, tomorrowMonth))
+          .map(e => formatEventDetail(e, tomorrowDay, tomorrowMonth, tomorrow.year()))
           .join(', ');
 
         // Template body: "Reminder: {{1}} is coming up and you have saved this event."
